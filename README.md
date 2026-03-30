@@ -58,25 +58,6 @@ tasks.withType<JavaCompile>().configureEach {
 
 The processor reads the API key from the `OPENAI_API_KEY` environment variable by default.
 
-## Supported v1
-
-- Annotated interface methods.
-- Annotated abstract methods in abstract classes.
-- Deterministic generated class names with `_AIGenerated`.
-- Compile-time full-class synthesis through OpenAI.
-- Signature preservation for parameters, generics, and declared exceptions where supported.
-- Full handwritten contract source sent to OpenAI as prompt context.
-- LLM-owned annotation copying when needed for the generated implementation.
-
-## Unsupported v1
-
-- Concrete, static, private, and default interface methods annotated with `@AIImplemented`.
-- Nested contract types.
-- Handwritten source rewriting.
-- Bytecode rewriting.
-- Framework-specific wiring or runtime integration.
-- Automatic provider SDK integration inside AIMP itself.
-
 ## Compile-Time Synthesis
 
 - AIMP uses OpenAI's Responses API for compile-time synthesis.
