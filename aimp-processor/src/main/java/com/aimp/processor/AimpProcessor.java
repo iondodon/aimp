@@ -13,6 +13,7 @@ import com.aimp.model.ContractModel;
 import com.aimp.model.GeneratedElementKind;
 import com.aimp.model.MethodModel;
 import com.aimp.model.ParameterModel;
+import com.aimp.model.ReferencedTypeModel;
 import com.aimp.model.TypeParameterModel;
 import com.aimp.model.Visibility;
 import java.io.IOException;
@@ -242,6 +243,7 @@ public final class AimpProcessor extends AbstractProcessor {
             contractKind,
             visibilityOf(contractType),
             extractContractSourceSnippet(contractType),
+            collectReferencedTypes(contractType, methods),
             toTypeParameters(contractType),
             extractAnnotations(contractType.getAnnotationMirrors()),
             constructors,
@@ -362,8 +364,178 @@ public final class AimpProcessor extends AbstractProcessor {
         return result;
     }
 
+    private List<ReferencedTypeModel> collectReferencedTypes(TypeElement contractType, List<ExecutableElement> methods) {
+        LinkedHashMap<String, ReferencedTypeModel> referencedTypes = new LinkedHashMap<>();
+        ReferencedTypeCollector collector = new ReferencedTypeCollector(contractType, referencedTypes);
+        for (ExecutableElement method : methods) {
+            collector.visit(method.getReturnType(), null);
+            for (VariableElement parameter : method.getParameters()) {
+                collector.visit(parameter.asType(), null);
+            }
+        }
+        collectAccessibleMemberTypes(contractType, collector);
+        return List.copyOf(referencedTypes.values());
+    }
+
+    private void collectAccessibleMemberTypes(TypeElement contractType, ReferencedTypeCollector collector) {
+        String contractPackage = processingEnv.getElementUtils().getPackageOf(contractType).getQualifiedName().toString();
+        TypeElement currentType = contractType;
+        boolean declaringContract = true;
+        while (currentType != null) {
+            String currentPackage = processingEnv.getElementUtils().getPackageOf(currentType).getQualifiedName().toString();
+
+            for (TypeElement memberType : ElementFilter.typesIn(currentType.getEnclosedElements())) {
+                if (isAccessibleFromGeneratedType(memberType, declaringContract, contractPackage, currentPackage)) {
+                    collector.collectTypeElement(memberType);
+                }
+            }
+
+            for (VariableElement field : ElementFilter.fieldsIn(currentType.getEnclosedElements())) {
+                if (isAccessibleFromGeneratedType(field, declaringContract, contractPackage, currentPackage)) {
+                    collector.visit(field.asType(), null);
+                }
+            }
+
+            for (ExecutableElement constructor : ElementFilter.constructorsIn(currentType.getEnclosedElements())) {
+                if (isAccessibleFromGeneratedType(constructor, declaringContract, contractPackage, currentPackage)) {
+                    collectExecutableReferencedTypes(constructor, collector);
+                }
+            }
+
+            for (ExecutableElement method : ElementFilter.methodsIn(currentType.getEnclosedElements())) {
+                if (isAccessibleFromGeneratedType(method, declaringContract, contractPackage, currentPackage)) {
+                    collectExecutableReferencedTypes(method, collector);
+                }
+            }
+
+            currentType = superclassOf(currentType);
+            declaringContract = false;
+        }
+    }
+
+    private void collectExecutableReferencedTypes(ExecutableElement executable, ReferencedTypeCollector collector) {
+        collector.visit(executable.getReturnType(), null);
+        for (VariableElement parameter : executable.getParameters()) {
+            collector.visit(parameter.asType(), null);
+        }
+        for (TypeMirror thrownType : executable.getThrownTypes()) {
+            collector.visit(thrownType, null);
+        }
+    }
+
+    private boolean isAccessibleFromGeneratedType(
+        Element member,
+        boolean declaringContract,
+        String contractPackage,
+        String declaringPackage
+    ) {
+        Set<Modifier> modifiers = member.getModifiers();
+        if (modifiers.contains(Modifier.PRIVATE)) {
+            return false;
+        }
+        if (declaringContract) {
+            return true;
+        }
+        if (modifiers.contains(Modifier.PUBLIC) || modifiers.contains(Modifier.PROTECTED)) {
+            return true;
+        }
+        return contractPackage.equals(declaringPackage);
+    }
+
+    private TypeElement superclassOf(TypeElement type) {
+        TypeMirror superclass = type.getSuperclass();
+        if (superclass == null || superclass.getKind() == TypeKind.NONE) {
+            return null;
+        }
+        if (superclass instanceof DeclaredType declaredType && declaredType.asElement() instanceof TypeElement typeElement) {
+            return typeElement;
+        }
+        return null;
+    }
+
     private String renderType(TypeMirror typeMirror) {
         return typeMirror.accept(new AnnotationFreeTypeRenderer(), null);
+    }
+
+    private final class ReferencedTypeCollector extends SimpleTypeVisitor14<Void, Void> {
+        private final String contractQualifiedName;
+        private final LinkedHashMap<String, ReferencedTypeModel> referencedTypes;
+
+        private ReferencedTypeCollector(TypeElement contractType, LinkedHashMap<String, ReferencedTypeModel> referencedTypes) {
+            this.contractQualifiedName = contractType.getQualifiedName().toString();
+            this.referencedTypes = referencedTypes;
+        }
+
+        private void collectTypeElement(TypeElement typeElement) {
+            String qualifiedName = typeElement.getQualifiedName().toString();
+            if (qualifiedName.equals(contractQualifiedName) || referencedTypes.containsKey(qualifiedName)) {
+                return;
+            }
+            String sourceSnippet = extractTypeSourceSnippet(typeElement);
+            if (!sourceSnippet.isBlank()) {
+                referencedTypes.put(qualifiedName, new ReferencedTypeModel(qualifiedName, sourceSnippet));
+            }
+        }
+
+        @Override
+        protected Void defaultAction(TypeMirror typeMirror, Void unused) {
+            return null;
+        }
+
+        @Override
+        public Void visitArray(ArrayType type, Void unused) {
+            visit(type.getComponentType(), unused);
+            return null;
+        }
+
+        @Override
+        public Void visitDeclared(DeclaredType type, Void unused) {
+            if (type.asElement() instanceof TypeElement typeElement) {
+                collectTypeElement(typeElement);
+            }
+            for (TypeMirror typeArgument : type.getTypeArguments()) {
+                visit(typeArgument, unused);
+            }
+            return null;
+        }
+
+        @Override
+        public Void visitTypeVariable(TypeVariable type, Void unused) {
+            if (type.getUpperBound() != null) {
+                visit(type.getUpperBound(), unused);
+            }
+            if (type.getLowerBound() != null) {
+                visit(type.getLowerBound(), unused);
+            }
+            return null;
+        }
+
+        @Override
+        public Void visitWildcard(WildcardType type, Void unused) {
+            if (type.getExtendsBound() != null) {
+                visit(type.getExtendsBound(), unused);
+            }
+            if (type.getSuperBound() != null) {
+                visit(type.getSuperBound(), unused);
+            }
+            return null;
+        }
+
+        @Override
+        public Void visitIntersection(IntersectionType type, Void unused) {
+            for (TypeMirror bound : type.getBounds()) {
+                visit(bound, unused);
+            }
+            return null;
+        }
+
+        @Override
+        public Void visitUnion(UnionType type, Void unused) {
+            for (TypeMirror alternative : type.getAlternatives()) {
+                visit(alternative, unused);
+            }
+            return null;
+        }
     }
 
     private static final class AnnotationFreeTypeRenderer extends SimpleTypeVisitor14<String, Void> {
@@ -565,11 +737,15 @@ public final class AimpProcessor extends AbstractProcessor {
     }
 
     private String extractContractSourceSnippet(TypeElement contractType) {
+        return extractTypeSourceSnippet(contractType);
+    }
+
+    private String extractTypeSourceSnippet(TypeElement typeElement) {
         if (trees == null) {
             return "";
         }
 
-        TreePath path = trees.getPath(contractType);
+        TreePath path = trees.getPath(typeElement);
         if (path == null) {
             return "";
         }

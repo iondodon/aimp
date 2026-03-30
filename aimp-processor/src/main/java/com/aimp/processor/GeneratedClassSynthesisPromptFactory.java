@@ -6,6 +6,7 @@ import com.aimp.model.ContractKind;
 import com.aimp.model.ContractModel;
 import com.aimp.model.MethodModel;
 import com.aimp.model.ParameterModel;
+import com.aimp.model.ReferencedTypeModel;
 import com.aimp.model.TypeParameterModel;
 import com.aimp.model.Visibility;
 import java.util.stream.Collectors;
@@ -71,6 +72,15 @@ final class GeneratedClassSynthesisPromptFactory {
         builder.append("```java\n");
         builder.append(contractSource(contract));
         builder.append("\n```\n");
+        if (!contract.referencedTypes().isEmpty()) {
+            builder.append("Referenced types with available source, including method signatures and accessible member context from the contract hierarchy:\n");
+            for (ReferencedTypeModel referencedType : contract.referencedTypes()) {
+                builder.append("Type: ").append(referencedType.qualifiedName()).append('\n');
+                builder.append("```java\n");
+                builder.append(referencedType.sourceSnippet());
+                builder.append("\n```\n");
+            }
+        }
         return builder.toString();
     }
 

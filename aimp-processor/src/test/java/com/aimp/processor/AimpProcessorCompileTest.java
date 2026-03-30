@@ -91,6 +91,9 @@ class AimpProcessorCompileTest {
             assertTrue(request.body().contains("Do not duplicate annotations."));
             assertTrue(request.body().contains("public interface PaymentService"));
             assertTrue(request.body().contains("@AIImplemented(\\\"Charge a payment and return the result\\\")"));
+            assertTrue(request.body().contains("Referenced types with available source, including method signatures and accessible member context from the contract hierarchy:"));
+            assertTrue(request.body().contains("public record PaymentRequest(String reference)"));
+            assertTrue(request.body().contains("public record PaymentResult(String status)"));
             return openAiOutputText("""
                 ```java
                 package com.example.payment;
@@ -317,6 +320,101 @@ class AimpProcessorCompileTest {
         assertTrue(generated.contains("protected OrderServiceBase_AIGenerated(java.lang.String region)"));
         assertTrue(generated.contains("return new com.example.order.OrderResult(\"reserved\");"));
         assertFalse(generated.contains("@com.aimp.annotations.AIImplemented"));
+    }
+
+    @Test
+    void promptIncludesTypesFromAccessibleMembersAndSuperclasses() throws Exception {
+        CompilationResult result;
+        try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
+            assertTrue(request.body().contains("Type: com.example.hierarchy.GreetingGateway"));
+            assertTrue(request.body().contains("public interface GreetingGateway {"));
+            assertTrue(request.body().contains("Type: com.example.hierarchy.AuditTrail"));
+            assertTrue(request.body().contains("public interface AuditTrail {"));
+            assertTrue(request.body().contains("Type: com.example.hierarchy.GreetingRequest"));
+            assertTrue(request.body().contains("Type: com.example.hierarchy.GreetingResponse"));
+            return openAiOutputText("""
+                package com.example.hierarchy;
+
+                public class GreetingController_AIGenerated extends GreetingController {
+                    protected GreetingController_AIGenerated(
+                        com.example.hierarchy.GreetingGateway gateway,
+                        com.example.hierarchy.AuditTrail auditTrail
+                    ) {
+                        super(gateway, auditTrail);
+                    }
+
+                    @Override
+                    public com.example.hierarchy.GreetingResponse greet(com.example.hierarchy.GreetingRequest request) {
+                        return this.gateway.greet(request);
+                    }
+                }
+                """);
+        })) {
+            result = ProcessorCompilation.compile(
+                tempDir.resolve("hierarchy-project"),
+                new AimpProcessor(),
+                List.of(
+                    SourceFile.of("com/example/hierarchy/AuditTrail.java", """
+                        package com.example.hierarchy;
+
+                        public interface AuditTrail {
+                            void record(String message);
+                        }
+                        """),
+                    SourceFile.of("com/example/hierarchy/GreetingGateway.java", """
+                        package com.example.hierarchy;
+
+                        public interface GreetingGateway {
+                            GreetingResponse greet(GreetingRequest request);
+                        }
+                        """),
+                    SourceFile.of("com/example/hierarchy/GreetingRequest.java", """
+                        package com.example.hierarchy;
+
+                        public record GreetingRequest(String name) {
+                        }
+                        """),
+                    SourceFile.of("com/example/hierarchy/GreetingResponse.java", """
+                        package com.example.hierarchy;
+
+                        public record GreetingResponse(String message) {
+                        }
+                        """),
+                    SourceFile.of("com/example/hierarchy/BaseController.java", """
+                        package com.example.hierarchy;
+
+                        public abstract class BaseController {
+                            protected final AuditTrail auditTrail;
+
+                            protected BaseController(AuditTrail auditTrail) {
+                                this.auditTrail = auditTrail;
+                            }
+                        }
+                        """),
+                    SourceFile.of("com/example/hierarchy/GreetingController.java", """
+                        package com.example.hierarchy;
+
+                        import com.aimp.annotations.AIImplemented;
+
+                        public abstract class GreetingController extends BaseController {
+                            protected final GreetingGateway gateway;
+
+                            protected GreetingController(GreetingGateway gateway, AuditTrail auditTrail) {
+                                super(auditTrail);
+                                this.gateway = gateway;
+                            }
+
+                            @AIImplemented("Delegate to gateway.greet(request)")
+                            public abstract GreetingResponse greet(GreetingRequest request);
+                        }
+                        """)
+                ),
+                Map.of(),
+                server.processorOptions()
+            );
+        }
+
+        assertTrue(result.success(), () -> String.join("\n", result.messages(javax.tools.Diagnostic.Kind.ERROR)));
     }
 
     @Test

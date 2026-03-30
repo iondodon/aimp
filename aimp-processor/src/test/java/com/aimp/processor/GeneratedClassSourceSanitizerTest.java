@@ -135,6 +135,7 @@ class GeneratedClassSourceSanitizerTest {
             List.of(),
             List.of(),
             List.of(),
+            List.of(),
             List.of()
         );
     }

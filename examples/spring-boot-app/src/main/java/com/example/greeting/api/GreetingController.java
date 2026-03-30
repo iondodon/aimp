@@ -1,5 +1,6 @@
 package com.example.greeting.api;
 
+import com.aimp.annotations.AIImplemented;
 import com.example.greeting.service.GreetingRequest;
 import com.example.greeting.service.GreetingResponse;
 import com.example.greeting.service.GreetingService;
@@ -14,8 +15,11 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/greetings")
-public class GreetingController {
-    private final GreetingService greetingService;
+public abstract class GreetingController {
+    /**
+     * Injected greeting service used by generated controller implementations.
+     */
+    protected final GreetingService greetingService;
 
     /**
      * Creates the controller with the generated greeting service bean.
@@ -33,7 +37,6 @@ public class GreetingController {
      * @return resolved greeting response
      */
     @PostMapping
-    public GreetingResponse greet(@Valid @RequestBody GreetingRequest request) {
-        return greetingService.greet(request);
-    }
+    @AIImplemented("Call the service")
+    public abstract GreetingResponse greet(@Valid @RequestBody GreetingRequest request);
 }
