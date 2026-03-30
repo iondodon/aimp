@@ -83,8 +83,11 @@ class AimpProcessorCompileTest {
             assertEquals("Bearer test-openai-key", request.authorization());
             assertTrue(request.body().contains("\"model\":\"gpt-5\""));
             assertTrue(request.body().contains("\"instructions\":\"You synthesize Java method bodies"));
+            assertTrue(request.body().contains("Do not emit generic placeholders such as TODO, stub, or Not implemented."));
             assertTrue(request.body().contains("\"input\":\"Generate only Java statements for the method body."));
             assertTrue(request.body().contains("Contract source:"));
+            assertTrue(request.body().contains("If the provided contract context is insufficient to implement real behavior"));
+            assertTrue(request.body().contains("AIMP could not synthesize a concrete implementation for com.example.payment.PaymentService#charge."));
             assertTrue(request.body().contains("public interface PaymentService"));
             assertTrue(request.body().contains("@AIImplemented(\\\"Charge a payment and return the result\\\")"));
             return openAiOutputText("return new com.example.payment.PaymentResult(\"approved-openai\")");

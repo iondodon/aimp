@@ -101,6 +101,7 @@ Only allowlisted annotations are copied, only to the same generated element kind
 - `-Aaimp.synthesis.openai.baseUrl=...` can override the OpenAI base URL, which is mainly useful for tests or proxies.
 - During compilation, AIMP emits compiler notes before and after each OpenAI synthesis call so you can see which contract methods hit the LLM.
 - The processor sends contract metadata plus the full handwritten contract source to OpenAI, then writes the returned Java statements directly into generated methods.
+- The prompt explicitly forbids generic placeholder bodies like `TODO` or `Not implemented`, and tells the model which fallback `UnsupportedOperationException` message to emit if the contract still lacks enough context.
 - The returned content must contain only Java statements for the method body, without code fences or surrounding method braces.
 
 ## Examples

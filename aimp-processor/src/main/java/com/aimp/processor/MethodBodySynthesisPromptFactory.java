@@ -19,6 +19,10 @@ final class MethodBodySynthesisPromptFactory {
         builder.append("Use the exact parameter names that were provided.\n");
         builder.append("Prefer fully qualified type names for referenced types.\n");
         builder.append("Use the full contract source below as the primary context.\n");
+        builder.append("Do not emit generic placeholders such as TODO, stub, or Not implemented.\n");
+        builder.append("If the provided contract context is insufficient to implement real behavior, do not invent business logic.\n");
+        builder.append("In that case, return exactly this Java statement as the final fallback:\n");
+        builder.append(fallbackThrow(contract, method)).append('\n');
         builder.append("Contract type: ").append(contract.qualifiedName()).append('\n');
         builder.append("Contract kind: ").append(contract.kind()).append('\n');
         builder.append("Method name: ").append(method.name()).append('\n');
@@ -47,6 +51,17 @@ final class MethodBodySynthesisPromptFactory {
         builder.append(contractSource(contract));
         builder.append("\n```\n");
         return builder.toString();
+    }
+
+    private static String fallbackThrow(ContractModel contract, MethodModel method) {
+        String message = "AIMP could not synthesize a concrete implementation for "
+            + contract.qualifiedName()
+            + "#"
+            + method.name()
+            + ". Add more context to @AIImplemented(\\\"...\\\") or to the contract code.";
+        return "throw new java.lang.UnsupportedOperationException(\""
+            + message
+            + "\");";
     }
 
     private static String contractSource(ContractModel contract) {

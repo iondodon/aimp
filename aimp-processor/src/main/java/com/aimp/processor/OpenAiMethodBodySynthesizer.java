@@ -106,7 +106,9 @@ final class OpenAiMethodBodySynthesizer implements MethodBodySynthesizer {
     private static String synthesisInstructions() {
         return "You synthesize Java method bodies for annotation-processor code generation. "
             + "Return only valid Java statements for the method body, with no markdown, no code fences, "
-            + "no surrounding braces, and no explanatory prose. Terminate every non-block statement with a semicolon.";
+            + "no surrounding braces, and no explanatory prose. Terminate every non-block statement with a semicolon. "
+            + "Do not emit generic placeholders such as TODO, stub, or Not implemented. "
+            + "If the provided contract context is insufficient, use the exact fallback throw statement requested in the prompt.";
     }
 
     private static void appendField(StringBuilder builder, String name, String value) {

@@ -43,6 +43,8 @@ class MethodBodySynthesisPromptFactoryTest {
         String prompt = MethodBodySynthesisPromptFactory.prompt(contract, method);
 
         assertTrue(prompt.contains("Use the full contract source below as the primary context."));
+        assertTrue(prompt.contains("Do not emit generic placeholders such as TODO, stub, or Not implemented."));
+        assertTrue(prompt.contains("throw new java.lang.UnsupportedOperationException(\"AIMP could not synthesize a concrete implementation for com.example.payment.PaymentService#charge."));
         assertTrue(prompt.contains("public interface PaymentService {"));
         assertTrue(prompt.contains("PaymentResult charge(PaymentRequest request);"));
     }
