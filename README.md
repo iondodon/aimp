@@ -42,7 +42,7 @@ Generated shape:
 ```java
 package com.example.payment;
 
-public final class PaymentService_AIGenerated implements PaymentService {
+public class PaymentService_AIGenerated implements PaymentService {
     @Override
     public PaymentResult charge(PaymentRequest request) {
         return new PaymentResult("approved");
@@ -107,6 +107,7 @@ Only allowlisted annotations are copied, only to the same generated element kind
 ## Examples
 
 - [`examples/basic-java`](examples/basic-java)
+- [`examples/spring-boot-app`](examples/spring-boot-app)
 - [`examples/spring-like-annotations`](examples/spring-like-annotations)
 
 Those examples are configured to use the OpenAI provider, so compiling them requires `OPENAI_API_KEY`.

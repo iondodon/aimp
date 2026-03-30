@@ -36,7 +36,7 @@ public final class JavaSourceRenderer {
         if (plan.visibility() == Visibility.PUBLIC) {
             declaration.append("public ");
         }
-        declaration.append("final class ").append(plan.simpleName());
+        declaration.append("class ").append(plan.simpleName());
 
         String typeParameters = renderTypeParameters(plan.typeParameters());
         if (!typeParameters.isBlank()) {

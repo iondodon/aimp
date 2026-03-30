@@ -222,7 +222,7 @@ class AimpProcessorCompileTest {
                         import java.lang.annotation.RetentionPolicy;
                         import java.lang.annotation.Target;
 
-                        @Target(ElementType.PARAMETER)
+                        @Target({ElementType.PARAMETER, ElementType.TYPE_USE})
                         @Retention(RetentionPolicy.RUNTIME)
                         public @interface Valid {
                         }
@@ -276,6 +276,7 @@ class AimpProcessorCompileTest {
         assertTrue(generated.contains("@org.springframework.stereotype.Service"));
         assertTrue(generated.contains("@org.springframework.transaction.annotation.Transactional"));
         assertTrue(generated.contains("@jakarta.validation.Valid com.example.order.OrderRequest request"));
+        assertFalse(generated.contains("com.example.order.@jakarta.validation.Valid OrderRequest"));
         assertTrue(generated.contains("protected OrderServiceBase_AIGenerated(java.lang.String region)"));
         assertTrue(generated.contains("return new com.example.order.OrderResult(\"reserved\");"));
         assertFalse(generated.contains("@com.aimp.annotations.AIImplemented"));

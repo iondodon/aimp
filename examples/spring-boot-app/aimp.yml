@@ -1,0 +1,6 @@
+aimp:
+  propagation:
+    annotations:
+      - org.springframework.stereotype.Service
+      - org.springframework.validation.annotation.Validated
+      - jakarta.validation.Valid

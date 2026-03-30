@@ -54,6 +54,19 @@ import javax.lang.model.element.Parameterizable;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.util.ElementFilter;
+import javax.lang.model.type.ArrayType;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.ErrorType;
+import javax.lang.model.type.IntersectionType;
+import javax.lang.model.type.NoType;
+import javax.lang.model.type.NullType;
+import javax.lang.model.type.PrimitiveType;
+import javax.lang.model.type.TypeKind;
+import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.TypeVariable;
+import javax.lang.model.type.UnionType;
+import javax.lang.model.type.WildcardType;
+import javax.lang.model.util.SimpleTypeVisitor14;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 
@@ -377,11 +390,11 @@ public final class AimpProcessor extends AbstractProcessor {
         Visibility visibility = contractKind == ContractKind.INTERFACE ? Visibility.PUBLIC : visibilityOf(method);
         return new MethodModel(
             method.getSimpleName().toString(),
-            method.getReturnType().toString(),
+            renderType(method.getReturnType()),
             visibility,
             toTypeParameters(method),
             toParameters(method),
-            method.getThrownTypes().stream().map(Object::toString).toList(),
+            method.getThrownTypes().stream().map(this::renderType).toList(),
             extractAnnotations(method.getAnnotationMirrors()),
             description
         );
@@ -404,12 +417,133 @@ public final class AimpProcessor extends AbstractProcessor {
             boolean varArgs = executable.isVarArgs() && index == parameters.size() - 1;
             result.add(new ParameterModel(
                 parameter.getSimpleName().toString(),
-                parameter.asType().toString(),
+                renderType(parameter.asType()),
                 varArgs,
                 extractAnnotations(parameter.getAnnotationMirrors())
             ));
         }
         return result;
+    }
+
+    private String renderType(TypeMirror typeMirror) {
+        return typeMirror.accept(new AnnotationFreeTypeRenderer(), null);
+    }
+
+    private static final class AnnotationFreeTypeRenderer extends SimpleTypeVisitor14<String, Void> {
+        @Override
+        protected String defaultAction(TypeMirror typeMirror, Void unused) {
+            return stripTypeUseAnnotations(typeMirror.toString());
+        }
+
+        @Override
+        public String visitPrimitive(PrimitiveType type, Void unused) {
+            return type.toString();
+        }
+
+        @Override
+        public String visitNoType(NoType type, Void unused) {
+            return type.getKind() == TypeKind.VOID ? "void" : type.toString();
+        }
+
+        @Override
+        public String visitNull(NullType type, Void unused) {
+            return type.toString();
+        }
+
+        @Override
+        public String visitArray(ArrayType type, Void unused) {
+            return visit(type.getComponentType()) + "[]";
+        }
+
+        @Override
+        public String visitDeclared(DeclaredType type, Void unused) {
+            StringBuilder builder = new StringBuilder(stripTypeUseAnnotations(type.asElement().toString()));
+            if (!type.getTypeArguments().isEmpty()) {
+                builder.append('<');
+                for (int index = 0; index < type.getTypeArguments().size(); index++) {
+                    if (index > 0) {
+                        builder.append(", ");
+                    }
+                    builder.append(visit(type.getTypeArguments().get(index)));
+                }
+                builder.append('>');
+            }
+            return builder.toString();
+        }
+
+        @Override
+        public String visitTypeVariable(TypeVariable type, Void unused) {
+            return stripTypeUseAnnotations(type.asElement().toString());
+        }
+
+        @Override
+        public String visitWildcard(WildcardType type, Void unused) {
+            if (type.getExtendsBound() != null) {
+                return "? extends " + visit(type.getExtendsBound());
+            }
+            if (type.getSuperBound() != null) {
+                return "? super " + visit(type.getSuperBound());
+            }
+            return "?";
+        }
+
+        @Override
+        public String visitIntersection(IntersectionType type, Void unused) {
+            return type.getBounds().stream().map(this::visit).reduce((left, right) -> left + " & " + right).orElse("");
+        }
+
+        @Override
+        public String visitUnion(UnionType type, Void unused) {
+            return type.getAlternatives().stream().map(this::visit).reduce((left, right) -> left + " | " + right).orElse("");
+        }
+
+        @Override
+        public String visitError(ErrorType type, Void unused) {
+            return defaultAction(type, unused);
+        }
+
+        private static String stripTypeUseAnnotations(String rendered) {
+            StringBuilder builder = new StringBuilder(rendered.length());
+            int index = 0;
+            while (index < rendered.length()) {
+                char current = rendered.charAt(index);
+                if (current == '@') {
+                    index = skipAnnotation(rendered, index + 1);
+                    while (index < rendered.length() && Character.isWhitespace(rendered.charAt(index))) {
+                        index++;
+                    }
+                    continue;
+                }
+                builder.append(current);
+                index++;
+            }
+            return builder.toString().replaceAll("\\s+", " ").trim();
+        }
+
+        private static int skipAnnotation(String rendered, int index) {
+            while (index < rendered.length()) {
+                char current = rendered.charAt(index);
+                if (Character.isWhitespace(current) || current == '<' || current == '>' || current == ',' || current == '[' || current == ']') {
+                    return index;
+                }
+                if (current == '(') {
+                    int depth = 1;
+                    index++;
+                    while (index < rendered.length() && depth > 0) {
+                        char nested = rendered.charAt(index);
+                        if (nested == '(') {
+                            depth++;
+                        } else if (nested == ')') {
+                            depth--;
+                        }
+                        index++;
+                    }
+                    return index;
+                }
+                index++;
+            }
+            return index;
+        }
     }
 
     private List<AnnotationUsage> extractAnnotations(List<? extends AnnotationMirror> mirrors) {

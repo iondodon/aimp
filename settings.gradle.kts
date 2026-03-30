@@ -9,5 +9,6 @@ include(
     "aimp-runtime",
     "aimp-testkit",
     "examples:basic-java",
+    "examples:spring-boot-app",
     "examples:spring-like-annotations",
 )
