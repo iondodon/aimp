@@ -6,11 +6,14 @@ import com.aimp.model.ContractModel;
 import java.util.regex.Pattern;
 
 final class GeneratedClassSourceSanitizer {
+    static final String INSUFFICIENT_CONTEXT_SENTINEL = "AIMP_INSUFFICIENT_CONTEXT";
+
     private GeneratedClassSourceSanitizer() {
     }
 
     static String sanitize(String rawSource, ContractModel contract) {
         String sanitized = stripMarkdownFences(rawSource == null ? "" : rawSource).trim();
+        failIfInsufficientContext(contract, sanitized);
         sanitized = stripAiImplementedImport(sanitized);
         sanitized = stripAiImplementedAnnotations(sanitized).trim();
         sanitized = collapseBlankLines(sanitized);
@@ -23,6 +26,26 @@ final class GeneratedClassSourceSanitizer {
         validateInheritance(contract, sanitized);
         validateNoAiImplemented(sanitized);
         return sanitized + System.lineSeparator();
+    }
+
+    private static void failIfInsufficientContext(ContractModel contract, String source) {
+        String trimmed = source.trim();
+        if (trimmed.equals(INSUFFICIENT_CONTEXT_SENTINEL) || trimmed.startsWith(INSUFFICIENT_CONTEXT_SENTINEL + ":")) {
+            throw insufficientContext(contract);
+        }
+        if (trimmed.contains("UnsupportedOperationException")
+            && (trimmed.contains("add more context to @AIImplemented")
+            || trimmed.contains("AIMP could not synthesize a concrete implementation"))) {
+            throw insufficientContext(contract);
+        }
+    }
+
+    private static MethodBodySynthesisException insufficientContext(ContractModel contract) {
+        return new MethodBodySynthesisException(
+            "OpenAI reported insufficient contract context for "
+                + contract.qualifiedName()
+                + ". Add more context to @AIImplemented(\"...\") or the contract code."
+        );
     }
 
     private static void validatePackage(ContractModel contract, String source) {

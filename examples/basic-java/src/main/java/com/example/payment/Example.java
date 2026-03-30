@@ -11,6 +11,11 @@ public interface Example {
      *
      * @return synthesized payment result
      */
-    @AIImplemented("Say hello 10 times an put the counter sum in the status")
+    @AIImplemented("""
+        Build a status string without using external systems.
+        Repeat the word "hello" exactly 10 times, separated by a single space.
+        Compute the sum of the integers from 1 through 10, which is 55.
+        Return exactly new com.example.payment.PaymentResult(greetingText + " | sum=55").
+        """)
     PaymentResult m1();
 }

@@ -6,8 +6,8 @@
 2. The processor validates supported usage.
 3. Source elements are mapped into the `aimp-model` contract model.
 4. The processor invokes OpenAI during compilation, sending the full handwritten contract source together with contract metadata and generated-class requirements.
-5. OpenAI returns the complete `*_AIGenerated` Java source file.
-6. The processor validates the returned source shape and writes it through `Filer`.
+5. OpenAI returns either the complete `*_AIGenerated` Java source file or an explicit insufficient-context sentinel.
+6. The processor turns insufficient-context responses into compiler errors; otherwise it validates the returned source shape and writes it through `Filer`.
 
 ## Module boundaries
 
@@ -34,6 +34,7 @@
 - Generated names end with `_AIGenerated`.
 - `@AIImplemented` is never copied.
 - OpenAI returns the full generated class source during compilation.
+- If OpenAI cannot infer a safe implementation from the contract, the processor fails compilation instead of generating a fallback `UnsupportedOperationException`.
 - The processor strips code fences, validates package/class/inheritance shape, and writes the result.
 - Framework annotations are no longer propagated through `aimp.yml`; the LLM decides which contract annotations to copy into the generated implementation.
 - The built-in processor backend calls OpenAI's Responses API directly.

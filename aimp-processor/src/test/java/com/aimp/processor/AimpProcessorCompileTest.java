@@ -141,11 +141,15 @@ class AimpProcessorCompileTest {
             .contains("return new com.example.payment.PaymentResult(\"approved-openai\");"));
         assertTrue(
             result.messages(Diagnostic.Kind.NOTE).stream()
-                .anyMatch(message -> message.contains("AIMP calling OpenAI for com.example.payment.PaymentService_AIGenerated"))
+                .anyMatch(message -> message.contains(
+                    "AIMP invoking OpenAI for contract com.example.payment.PaymentService -> generated type com.example.payment.PaymentService_AIGenerated"
+                ))
         );
         assertTrue(
             result.messages(Diagnostic.Kind.NOTE).stream()
-                .anyMatch(message -> message.contains("AIMP received OpenAI output for com.example.payment.PaymentService_AIGenerated"))
+                .anyMatch(message -> message.contains(
+                    "AIMP received OpenAI output for contract com.example.payment.PaymentService -> generated type com.example.payment.PaymentService_AIGenerated"
+                ))
         );
     }
 
@@ -313,6 +317,56 @@ class AimpProcessorCompileTest {
         assertTrue(generated.contains("protected OrderServiceBase_AIGenerated(java.lang.String region)"));
         assertTrue(generated.contains("return new com.example.order.OrderResult(\"reserved\");"));
         assertFalse(generated.contains("@com.aimp.annotations.AIImplemented"));
+    }
+
+    @Test
+    void insufficientContextFailsCompilation() throws Exception {
+        CompilationResult result;
+        try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
+            assertTrue(request.body().contains("AIMP_INSUFFICIENT_CONTEXT"));
+            return openAiOutputText(GeneratedClassSourceSanitizer.INSUFFICIENT_CONTEXT_SENTINEL);
+        })) {
+            result = ProcessorCompilation.compile(
+                tempDir.resolve("insufficient-context-project"),
+                new AimpProcessor(),
+                List.of(
+                    SourceFile.of("com/example/payment/PaymentRequest.java", """
+                        package com.example.payment;
+
+                        public record PaymentRequest(String reference) {
+                        }
+                        """),
+                    SourceFile.of("com/example/payment/PaymentResult.java", """
+                        package com.example.payment;
+
+                        public record PaymentResult(String status) {
+                        }
+                        """),
+                    SourceFile.of("com/example/payment/PaymentService.java", """
+                        package com.example.payment;
+
+                        import com.aimp.annotations.AIImplemented;
+
+                        public interface PaymentService {
+                            @AIImplemented("Charge a payment and return the result")
+                            PaymentResult charge(PaymentRequest request);
+                        }
+                        """)
+                ),
+                Map.of(),
+                server.processorOptions()
+            );
+        }
+
+        assertFalse(result.success());
+        assertTrue(
+            result.messages(javax.tools.Diagnostic.Kind.ERROR).stream()
+                .anyMatch(message -> message.contains("insufficient contract context for com.example.payment.PaymentService"))
+        );
+        assertTrue(
+            result.messages(javax.tools.Diagnostic.Kind.ERROR).stream()
+                .anyMatch(message -> message.contains("Add more context to @AIImplemented(\"...\") or the contract code"))
+        );
     }
 
     @Test

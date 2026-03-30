@@ -46,6 +46,8 @@ class GeneratedClassSynthesisPromptFactoryTest {
         assertTrue(prompt.contains("Generated class name: PaymentService_AIGenerated"));
         assertTrue(prompt.contains("If the handwritten contract contains framework or validation annotations"));
         assertTrue(prompt.contains("Do not duplicate annotations."));
+        assertTrue(prompt.contains("AIMP_INSUFFICIENT_CONTEXT"));
+        assertTrue(prompt.contains("Do not generate a fallback Java class in that case."));
         assertTrue(prompt.contains("public interface PaymentService {"));
         assertTrue(prompt.contains("PaymentResult charge(PaymentRequest request);"));
     }

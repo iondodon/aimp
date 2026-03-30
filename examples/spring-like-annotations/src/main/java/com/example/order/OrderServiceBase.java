@@ -24,7 +24,12 @@ public abstract class OrderServiceBase {
      * @param request order request to place
      * @return order placement result
      */
-    @AIImplemented("Reserve inventory and return the result")
+    @AIImplemented("""
+        Implement this method without calling external systems.
+        Use request.id() as the order identifier.
+        Return exactly new com.example.order.OrderResult("reserved:" + request.id()).
+        Do not introduce any extra dependencies or infrastructure.
+        """)
     @Transactional
     public abstract OrderResult place(@Valid OrderRequest request);
 }

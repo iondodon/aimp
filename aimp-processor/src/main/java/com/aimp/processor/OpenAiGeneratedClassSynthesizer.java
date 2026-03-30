@@ -34,9 +34,11 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
 
     @Override
     public String synthesize(ContractModel contract) {
+        String contractQualifiedName = contract.qualifiedName();
         String generatedQualifiedName = GeneratedTypeNaming.generatedQualifiedName(contract.packageName(), contract.simpleName());
+        String logTarget = "contract " + contractQualifiedName + " -> generated type " + generatedQualifiedName;
         long startedAt = System.nanoTime();
-        logger.accept("AIMP calling OpenAI for " + generatedQualifiedName + " with model " + model);
+        logger.accept("AIMP invoking OpenAI for " + logTarget + " with model " + model);
 
         HttpRequest request = HttpRequest.newBuilder(endpoint)
             .timeout(timeout)
@@ -50,17 +52,17 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
             response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            logger.accept("AIMP OpenAI call failed for " + generatedQualifiedName + " after " + elapsedMillis(startedAt) + " ms");
+            logger.accept("AIMP OpenAI call failed for " + logTarget + " after " + elapsedMillis(startedAt) + " ms");
             throw new MethodBodySynthesisException("Failed to call OpenAI Responses API at " + endpoint, exception);
         } catch (IOException exception) {
-            logger.accept("AIMP OpenAI call failed for " + generatedQualifiedName + " after " + elapsedMillis(startedAt) + " ms");
+            logger.accept("AIMP OpenAI call failed for " + logTarget + " after " + elapsedMillis(startedAt) + " ms");
             throw new MethodBodySynthesisException("Failed to call OpenAI Responses API at " + endpoint, exception);
         }
 
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             logger.accept(
                 "AIMP OpenAI call failed for "
-                    + generatedQualifiedName
+                    + logTarget
                     + " with HTTP "
                     + response.statusCode()
                     + " after "
@@ -74,7 +76,7 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
 
         String outputText = OpenAiResponsesParser.extractOutputText(response.body());
         String sanitized = GeneratedClassSourceSanitizer.sanitize(outputText, contract);
-        logger.accept("AIMP received OpenAI output for " + generatedQualifiedName + " in " + elapsedMillis(startedAt) + " ms");
+        logger.accept("AIMP received OpenAI output for " + logTarget + " in " + elapsedMillis(startedAt) + " ms");
         return sanitized;
     }
 
@@ -102,7 +104,8 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
         return "You synthesize full Java implementation classes for annotation-processor code generation. "
             + "Return only valid Java source for the complete generated class, with no markdown, no code fences, "
             + "and no explanatory prose. Output exactly one top-level class in the requested package with the requested name. "
-            + "Do not include @AIImplemented in the result. Avoid duplicate annotations.";
+            + "Do not include @AIImplemented in the result. Avoid duplicate annotations. "
+            + "If the prompt says context is insufficient, return only the exact sentinel requested by the prompt.";
     }
 
     private static void appendField(StringBuilder builder, String name, String value) {

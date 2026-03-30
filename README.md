@@ -83,10 +83,11 @@ The processor reads the API key from the `OPENAI_API_KEY` environment variable b
 - `OPENAI_API_KEY` is required unless `-Aaimp.synthesis.apiKey=...` is passed explicitly.
 - `-Aaimp.synthesis.model=...` overrides the model, defaulting to `gpt-5`.
 - `-Aaimp.synthesis.openai.baseUrl=...` can override the OpenAI base URL, which is mainly useful for tests or proxies.
-- During compilation, AIMP emits compiler notes before and after each OpenAI synthesis call so you can see which generated classes hit the LLM.
+- During compilation, AIMP emits compiler notes before and after each OpenAI synthesis call so you can see exactly which handwritten contract invoked the LLM and which generated type is being written.
 - The processor sends contract metadata plus the full handwritten contract source to OpenAI and expects the complete `*_AIGenerated` Java source file back.
 - The prompt allows the model to introduce helper fields, constants, constructors, and helper methods when needed.
 - Annotation copying is now owned by the generated-class prompt rather than by `aimp.yml`.
+- If OpenAI reports that the contract lacks enough implementation context, AIMP fails compilation and tells you to add more context to `@AIImplemented("...")` or the contract code.
 - The returned content must contain only raw Java source for the generated class, without code fences or prose.
 
 ## Examples

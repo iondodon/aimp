@@ -36,7 +36,9 @@ final class GeneratedClassSynthesisPromptFactory {
         builder.append("Do not duplicate annotations. Do not emit both a declaration annotation and an equivalent type-use annotation for the same element.\n");
         builder.append("Keep the output compilable as plain Java 21 source.\n");
         builder.append("If the contract context is insufficient to implement real behavior, do not invent hidden infrastructure.\n");
-        builder.append("In that case, use an UnsupportedOperationException with a clear message telling the user to add more context to @AIImplemented(\"...\") or the contract code.\n");
+        builder.append("In that case, return exactly this single line and nothing else:\n");
+        builder.append(GeneratedClassSourceSanitizer.INSUFFICIENT_CONTEXT_SENTINEL).append('\n');
+        builder.append("Do not generate a fallback Java class in that case.\n");
         builder.append("Generated class name: ").append(GeneratedTypeNaming.generatedSimpleName(contract.simpleName())).append('\n');
         builder.append("Generated qualified name: ")
             .append(GeneratedTypeNaming.generatedQualifiedName(contract.packageName(), contract.simpleName()))

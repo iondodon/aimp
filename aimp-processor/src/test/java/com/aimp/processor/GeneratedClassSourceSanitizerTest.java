@@ -87,6 +87,43 @@ class GeneratedClassSourceSanitizerTest {
             """.trim(), sanitized.trim());
     }
 
+    @Test
+    void failsWhenModelReportsInsufficientContext() {
+        MethodBodySynthesisException exception = assertThrows(
+            MethodBodySynthesisException.class,
+            () -> GeneratedClassSourceSanitizer.sanitize(
+                GeneratedClassSourceSanitizer.INSUFFICIENT_CONTEXT_SENTINEL,
+                contract()
+            )
+        );
+
+        assertEquals(
+            "OpenAI reported insufficient contract context for com.example.payment.PaymentService. Add more context to @AIImplemented(\"...\") or the contract code.",
+            exception.getMessage()
+        );
+    }
+
+    @Test
+    void failsWhenModelReturnsOldUnsupportedOperationFallback() {
+        MethodBodySynthesisException exception = assertThrows(
+            MethodBodySynthesisException.class,
+            () -> GeneratedClassSourceSanitizer.sanitize("""
+                package com.example.payment;
+
+                public class PaymentService_AIGenerated implements PaymentService {
+                    public java.lang.String charge() {
+                        throw new java.lang.UnsupportedOperationException("AIMP could not synthesize a concrete implementation for com.example.payment.PaymentService#charge. Add more context to @AIImplemented(\\"...\\") or the contract code.");
+                    }
+                }
+                """, contract())
+        );
+
+        assertEquals(
+            "OpenAI reported insufficient contract context for com.example.payment.PaymentService. Add more context to @AIImplemented(\"...\") or the contract code.",
+            exception.getMessage()
+        );
+    }
+
     private static ContractModel contract() {
         return new ContractModel(
             "com.example.payment",
