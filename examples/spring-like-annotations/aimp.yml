@@ -1,0 +1,6 @@
+aimp:
+  propagation:
+    annotations:
+      - org.springframework.stereotype.Service
+      - org.springframework.transaction.annotation.Transactional
+      - jakarta.validation.Valid
