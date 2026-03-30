@@ -4,14 +4,13 @@ AIMP is a framework-agnostic Java 21 annotation processor that generates concret
 
 Generated source is emitted into annotation-processor output only. Handwritten Java files are never rewritten or mutated.
 
-The annotation processor itself synthesizes Java method bodies during compilation by calling a configured LLM backend. Generated classes are plain Java and do not require a runtime executor.
+The annotation processor itself synthesizes complete Java implementation classes during compilation by calling OpenAI. Generated classes are plain Java and do not require a runtime executor.
 
 ## Modules
 
 - `aimp-annotations`: stable public annotations such as `@AIImplemented`.
-- `aimp-config`: typed loading and validation for `aimp.yml`.
 - `aimp-model`: internal model for contracts, annotations, and generation plans.
-- `aimp-core`: framework-agnostic planning and Java source rendering for synthesized method bodies.
+- `aimp-core`: shared internal naming and planning utilities.
 - `aimp-processor`: the annotation processor that discovers contracts and writes generated source files.
 - `aimp-runtime`: optional support module kept for future integrations.
 - `aimp-testkit`: compile-test helpers used by processor tests.
@@ -22,7 +21,6 @@ The annotation processor itself synthesizes Java method bodies during compilatio
 2. Add `com.aimp:aimp-processor` to the `annotationProcessor` configuration.
 3. Annotate interface or abstract methods with `@AIImplemented("...")`.
 4. Configure OpenAI-based compile-time synthesis with annotation processor options.
-5. Optionally create `aimp.yml` in the project root to allowlist annotations for propagation.
 
 Example:
 
@@ -60,29 +58,15 @@ tasks.withType<JavaCompile>().configureEach {
 
 The processor reads the API key from the `OPENAI_API_KEY` environment variable by default.
 
-## Configuration
-
-`aimp.yml` uses an allowlist-only propagation model:
-
-```yaml
-aimp:
-  propagation:
-    annotations:
-      - org.springframework.stereotype.Service
-      - org.springframework.transaction.annotation.Transactional
-      - jakarta.validation.Valid
-```
-
-Only allowlisted annotations are copied, only to the same generated element kind, and `@AIImplemented` is never propagated.
-
 ## Supported v1
 
 - Annotated interface methods.
 - Annotated abstract methods in abstract classes.
 - Deterministic generated class names with `_AIGenerated`.
-- Compile-time method body synthesis through OpenAI.
+- Compile-time full-class synthesis through OpenAI.
 - Signature preservation for parameters, generics, and declared exceptions where supported.
-- Config-driven annotation propagation for types, methods, and parameters.
+- Full handwritten contract source sent to OpenAI as prompt context.
+- LLM-owned annotation copying when needed for the generated implementation.
 
 ## Unsupported v1
 
@@ -99,10 +83,11 @@ Only allowlisted annotations are copied, only to the same generated element kind
 - `OPENAI_API_KEY` is required unless `-Aaimp.synthesis.apiKey=...` is passed explicitly.
 - `-Aaimp.synthesis.model=...` overrides the model, defaulting to `gpt-5`.
 - `-Aaimp.synthesis.openai.baseUrl=...` can override the OpenAI base URL, which is mainly useful for tests or proxies.
-- During compilation, AIMP emits compiler notes before and after each OpenAI synthesis call so you can see which contract methods hit the LLM.
-- The processor sends contract metadata plus the full handwritten contract source to OpenAI, then writes the returned Java statements directly into generated methods.
-- The prompt explicitly forbids generic placeholder bodies like `TODO` or `Not implemented`, and tells the model which fallback `UnsupportedOperationException` message to emit if the contract still lacks enough context.
-- The returned content must contain only Java statements for the method body, without code fences or surrounding method braces.
+- During compilation, AIMP emits compiler notes before and after each OpenAI synthesis call so you can see which generated classes hit the LLM.
+- The processor sends contract metadata plus the full handwritten contract source to OpenAI and expects the complete `*_AIGenerated` Java source file back.
+- The prompt allows the model to introduce helper fields, constants, constructors, and helper methods when needed.
+- Annotation copying is now owned by the generated-class prompt rather than by `aimp.yml`.
+- The returned content must contain only raw Java source for the generated class, without code fences or prose.
 
 ## Examples
 

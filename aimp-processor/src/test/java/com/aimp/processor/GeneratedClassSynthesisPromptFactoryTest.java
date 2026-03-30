@@ -9,7 +9,7 @@ import com.aimp.model.Visibility;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-class MethodBodySynthesisPromptFactoryTest {
+class GeneratedClassSynthesisPromptFactoryTest {
     @Test
     void includesContractSourceSnippetWhenAvailable() {
         MethodModel method = new MethodModel(
@@ -40,11 +40,12 @@ class MethodBodySynthesisPromptFactoryTest {
             List.of(method)
         );
 
-        String prompt = MethodBodySynthesisPromptFactory.prompt(contract, method);
+        String prompt = GeneratedClassSynthesisPromptFactory.prompt(contract);
 
-        assertTrue(prompt.contains("Use the full contract source below as the primary context."));
-        assertTrue(prompt.contains("Do not emit generic placeholders such as TODO, stub, or Not implemented."));
-        assertTrue(prompt.contains("throw new java.lang.UnsupportedOperationException(\"AIMP could not synthesize a concrete implementation for com.example.payment.PaymentService#charge."));
+        assertTrue(prompt.contains("Generate the complete Java source file for the generated implementation class."));
+        assertTrue(prompt.contains("Generated class name: PaymentService_AIGenerated"));
+        assertTrue(prompt.contains("If the handwritten contract contains framework or validation annotations"));
+        assertTrue(prompt.contains("Do not duplicate annotations."));
         assertTrue(prompt.contains("public interface PaymentService {"));
         assertTrue(prompt.contains("PaymentResult charge(PaymentRequest request);"));
     }

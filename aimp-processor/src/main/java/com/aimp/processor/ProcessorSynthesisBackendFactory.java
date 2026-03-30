@@ -1,6 +1,5 @@
 package com.aimp.processor;
 
-import com.aimp.core.MethodBodySynthesizer;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
@@ -27,12 +26,12 @@ final class ProcessorSynthesisBackendFactory {
         this.envLookup = Objects.requireNonNull(envLookup, "envLookup");
     }
 
-    MethodBodySynthesizer create(Map<String, String> options) {
+    GeneratedClassSynthesizer create(Map<String, String> options) {
         return create(options, ignored -> {
         });
     }
 
-    MethodBodySynthesizer create(Map<String, String> options, Consumer<String> logger) {
+    GeneratedClassSynthesizer create(Map<String, String> options, Consumer<String> logger) {
         String model = trimToNull(options.get(OPTION_SYNTHESIS_MODEL));
         if (model == null) {
             model = DEFAULT_OPENAI_MODEL;
@@ -56,7 +55,7 @@ final class ProcessorSynthesisBackendFactory {
             baseUrl = DEFAULT_OPENAI_BASE_URL;
         }
 
-        return new OpenAiMethodBodySynthesizer(OpenAiEndpoints.responsesEndpoint(baseUrl), model, timeout, apiKey, logger);
+        return new OpenAiGeneratedClassSynthesizer(OpenAiEndpoints.responsesEndpoint(baseUrl), model, timeout, apiKey, logger);
     }
 
     private Duration timeout(Map<String, String> options) {

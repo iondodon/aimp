@@ -21,7 +21,7 @@ class ProcessorSynthesisBackendFactoryTest {
         Object synthesizer = factory.create(Map.of());
 
         assertEquals("OPENAI_API_KEY", requestedEnvVar.get());
-        assertInstanceOf(OpenAiMethodBodySynthesizer.class, synthesizer);
+        assertInstanceOf(OpenAiGeneratedClassSynthesizer.class, synthesizer);
     }
 
     @Test

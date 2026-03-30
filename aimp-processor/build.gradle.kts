@@ -5,7 +5,6 @@ plugins {
 
 dependencies {
     implementation(project(":aimp-annotations"))
-    implementation(project(":aimp-config"))
     implementation(project(":aimp-core"))
     implementation(project(":aimp-model"))
 

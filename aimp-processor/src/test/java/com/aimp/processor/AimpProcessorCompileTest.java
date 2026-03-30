@@ -22,6 +22,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class AimpProcessorCompileTest {
+    private static final String PAYMENT_SERVICE_GENERATED_SOURCE = loadResource("golden/PaymentService_AIGenerated.java");
+
     @TempDir
     Path tempDir;
 
@@ -34,7 +36,7 @@ class AimpProcessorCompileTest {
             assertTrue(request.body().contains("PaymentService"));
             assertTrue(request.body().contains("charge"));
             assertTrue(request.body().contains("Charge a payment and return the result"));
-            return openAiOutputText("return new com.example.payment.PaymentResult(\"approved\");");
+            return openAiOutputText(PAYMENT_SERVICE_GENERATED_SOURCE);
         })) {
             result = ProcessorCompilation.compile(
                 tempDir.resolve("interface-project"),
@@ -82,15 +84,25 @@ class AimpProcessorCompileTest {
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
             assertEquals("Bearer test-openai-key", request.authorization());
             assertTrue(request.body().contains("\"model\":\"gpt-5\""));
-            assertTrue(request.body().contains("\"instructions\":\"You synthesize Java method bodies"));
-            assertTrue(request.body().contains("Do not emit generic placeholders such as TODO, stub, or Not implemented."));
-            assertTrue(request.body().contains("\"input\":\"Generate only Java statements for the method body."));
+            assertTrue(request.body().contains("\"instructions\":\"You synthesize full Java implementation classes"));
+            assertTrue(request.body().contains("\"input\":\"Generate the complete Java source file for the generated implementation class."));
+            assertTrue(request.body().contains("Generated class name: PaymentService_AIGenerated"));
             assertTrue(request.body().contains("Contract source:"));
-            assertTrue(request.body().contains("If the provided contract context is insufficient to implement real behavior"));
-            assertTrue(request.body().contains("AIMP could not synthesize a concrete implementation for com.example.payment.PaymentService#charge."));
+            assertTrue(request.body().contains("Do not duplicate annotations."));
             assertTrue(request.body().contains("public interface PaymentService"));
             assertTrue(request.body().contains("@AIImplemented(\\\"Charge a payment and return the result\\\")"));
-            return openAiOutputText("return new com.example.payment.PaymentResult(\"approved-openai\")");
+            return openAiOutputText("""
+                ```java
+                package com.example.payment;
+
+                public class PaymentService_AIGenerated implements PaymentService {
+                    @Override
+                    public com.example.payment.PaymentResult charge(com.example.payment.PaymentRequest request) {
+                        return new com.example.payment.PaymentResult("approved-openai");
+                    }
+                }
+                ```
+                """);
         })) {
             result = ProcessorCompilation.compile(
                 tempDir.resolve("openai-project"),
@@ -129,11 +141,11 @@ class AimpProcessorCompileTest {
             .contains("return new com.example.payment.PaymentResult(\"approved-openai\");"));
         assertTrue(
             result.messages(Diagnostic.Kind.NOTE).stream()
-                .anyMatch(message -> message.contains("AIMP calling OpenAI for com.example.payment.PaymentService#charge"))
+                .anyMatch(message -> message.contains("AIMP calling OpenAI for com.example.payment.PaymentService_AIGenerated"))
         );
         assertTrue(
             result.messages(Diagnostic.Kind.NOTE).stream()
-                .anyMatch(message -> message.contains("AIMP received OpenAI output for com.example.payment.PaymentService#charge"))
+                .anyMatch(message -> message.contains("AIMP received OpenAI output for com.example.payment.PaymentService_AIGenerated"))
         );
     }
 
@@ -142,7 +154,16 @@ class AimpProcessorCompileTest {
         CompilationResult result;
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
             assertTrue(request.body().contains("answer"));
-            return openAiOutputText("return prompt + \"-generated\";");
+            return openAiOutputText("""
+                package com.example.echo;
+
+                public class EchoService_AIGenerated implements EchoService {
+                    @Override
+                    public java.lang.String answer(java.lang.String prompt) {
+                        return prompt + "-generated";
+                    }
+                }
+                """);
         })) {
             result = ProcessorCompilation.compile(
                 tempDir.resolve("runtime-project"),
@@ -178,11 +199,30 @@ class AimpProcessorCompileTest {
     }
 
     @Test
-    void generatesSubclassAndPropagatesAllowlistedAnnotations() throws Exception {
+    void generatesSubclassWithoutAimpConfigAndLetsOpenAiDefineAnnotations() throws Exception {
         CompilationResult result;
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
             assertTrue(request.body().contains("OrderServiceBase"));
-            return openAiOutputText("return new com.example.order.OrderResult(\"reserved\");");
+            assertTrue(request.body().contains("@Service"));
+            assertTrue(request.body().contains("@Transactional"));
+            assertTrue(request.body().contains("@Valid"));
+            assertTrue(request.body().contains("copy them once to the legally applicable generated element"));
+            return openAiOutputText("""
+                package com.example.order;
+
+                @org.springframework.stereotype.Service
+                public class OrderServiceBase_AIGenerated extends OrderServiceBase {
+                    protected OrderServiceBase_AIGenerated(java.lang.String region) {
+                        super(region);
+                    }
+
+                    @Override
+                    @org.springframework.transaction.annotation.Transactional
+                    public com.example.order.OrderResult place(@jakarta.validation.Valid com.example.order.OrderRequest request) {
+                        return new com.example.order.OrderResult("reserved");
+                    }
+                }
+                """);
         })) {
             result = ProcessorCompilation.compile(
                 tempDir.resolve("abstract-project"),
@@ -258,14 +298,7 @@ class AimpProcessorCompileTest {
                         }
                         """)
                 ),
-                Map.of("aimp.yml", """
-                    aimp:
-                      propagation:
-                        annotations:
-                          - org.springframework.stereotype.Service
-                          - org.springframework.transaction.annotation.Transactional
-                          - jakarta.validation.Valid
-                    """),
+                Map.of(),
                 server.processorOptions()
             );
         }
@@ -316,6 +349,14 @@ class AimpProcessorCompileTest {
                 throw new IOException("Missing test resource " + resourceName);
             }
             return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private static String loadResource(String resourceName) {
+        try {
+            return readResource(resourceName);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to load test resource " + resourceName, exception);
         }
     }
 

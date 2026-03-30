@@ -71,7 +71,7 @@ class OpenAiResponsesParserTest {
         );
 
         assertEquals(
-            "OpenAI refused to synthesize a method body: Unsafe request",
+            "OpenAI refused to synthesize a generated class: Unsafe request",
             exception.getMessage()
         );
     }

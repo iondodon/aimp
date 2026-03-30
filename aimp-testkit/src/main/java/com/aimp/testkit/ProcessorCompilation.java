@@ -64,7 +64,6 @@ public final class ProcessorCompilation {
             options.add(classesDirectory.toString());
             options.add("-s");
             options.add(generatedSourcesDirectory.toString());
-            options.add("-Aaimp.project.dir=" + projectDirectory);
             options.addAll(additionalOptions);
 
             JavaCompiler.CompilationTask task = compiler.getTask(

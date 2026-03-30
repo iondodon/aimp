@@ -5,21 +5,12 @@ import com.sun.source.util.SourcePositions;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
 import com.aimp.annotations.AIImplemented;
-import com.aimp.config.AimpConfig;
-import com.aimp.config.AimpConfigException;
-import com.aimp.config.AimpConfigLoader;
-import com.aimp.core.AnnotationPropagationDecider;
-import com.aimp.core.DefaultMethodImplementationPlanner;
-import com.aimp.core.GenerationPlanner;
 import com.aimp.core.GeneratedTypeNaming;
-import com.aimp.core.JavaSourceRenderer;
-import com.aimp.core.MethodBodySynthesizer;
 import com.aimp.model.AnnotationUsage;
 import com.aimp.model.ConstructorModel;
 import com.aimp.model.ContractKind;
 import com.aimp.model.ContractModel;
 import com.aimp.model.GeneratedElementKind;
-import com.aimp.model.GeneratedTypePlan;
 import com.aimp.model.MethodModel;
 import com.aimp.model.ParameterModel;
 import com.aimp.model.TypeParameterModel;
@@ -28,7 +19,6 @@ import java.io.IOException;
 import java.io.Reader;
 import java.io.StringWriter;
 import java.io.Writer;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -75,17 +65,10 @@ import javax.tools.JavaFileObject;
  * generates concrete implementations in generated sources.
  */
 public final class AimpProcessor extends AbstractProcessor {
-    static final String OPTION_PROJECT_DIR = "aimp.project.dir";
-
-    private final AimpConfigLoader configLoader = new AimpConfigLoader();
     private final ProcessorSynthesisBackendFactory synthesisBackendFactory = new ProcessorSynthesisBackendFactory();
-    private final JavaSourceRenderer sourceRenderer = new JavaSourceRenderer();
     private final Set<String> generatedTypeNames = new TreeSet<>();
 
-    private AimpConfig config = AimpConfig.EMPTY;
-    private boolean configLoaded;
-    private boolean configValid = true;
-    private GenerationPlanner generationPlanner;
+    private GeneratedClassSynthesizer generatedClassSynthesizer;
 
     private Messager messager;
     private Trees trees;
@@ -110,7 +93,6 @@ public final class AimpProcessor extends AbstractProcessor {
     @Override
     public Set<String> getSupportedOptions() {
         return Set.of(
-            OPTION_PROJECT_DIR,
             ProcessorSynthesisBackendFactory.OPTION_SYNTHESIS_MODEL,
             ProcessorSynthesisBackendFactory.OPTION_SYNTHESIS_TIMEOUT_MILLIS,
             ProcessorSynthesisBackendFactory.OPTION_SYNTHESIS_API_KEY,
@@ -151,58 +133,51 @@ public final class AimpProcessor extends AbstractProcessor {
             return true;
         }
 
-        if (!loadConfig()) {
-            return true;
-        }
-
         for (Map.Entry<TypeElement, List<ExecutableElement>> entry : methodsByContract.entrySet()) {
             ContractModel contract = buildContract(entry.getKey(), entry.getValue());
             if (contract == null) {
                 continue;
             }
 
-            if (!ensureGenerationPlanner()) {
+            if (!ensureGeneratedClassSynthesizer()) {
                 return true;
             }
 
-            GeneratedTypePlan plan;
+            String generatedQualifiedName = GeneratedTypeNaming.generatedQualifiedName(contract.packageName(), contract.simpleName());
+            String generatedSource;
             try {
-                plan = generationPlanner.plan(contract, config);
+                generatedSource = generatedClassSynthesizer.synthesize(contract);
             } catch (MethodBodySynthesisException exception) {
-                error(entry.getKey(), "Failed to synthesize method implementations: " + exception.getMessage());
+                error(entry.getKey(), "Failed to synthesize generated class: " + exception.getMessage());
                 continue;
             }
-            if (generatedTypeNames.contains(plan.qualifiedName())) {
+            if (generatedTypeNames.contains(generatedQualifiedName)) {
                 continue;
             }
 
             try {
-                JavaFileObject sourceFile = processingEnv.getFiler().createSourceFile(plan.qualifiedName(), entry.getKey());
+                JavaFileObject sourceFile = processingEnv.getFiler().createSourceFile(generatedQualifiedName, entry.getKey());
                 try (Writer writer = sourceFile.openWriter()) {
-                    writer.write(sourceRenderer.render(plan));
+                    writer.write(generatedSource);
                 }
-                generatedTypeNames.add(plan.qualifiedName());
+                generatedTypeNames.add(generatedQualifiedName);
             } catch (FilerException ignored) {
-                generatedTypeNames.add(plan.qualifiedName());
+                generatedTypeNames.add(generatedQualifiedName);
             } catch (IOException exception) {
-                error(entry.getKey(), "Failed to write generated source " + plan.qualifiedName() + ": " + exception.getMessage());
+                error(entry.getKey(), "Failed to write generated source " + generatedQualifiedName + ": " + exception.getMessage());
             }
         }
 
         return true;
     }
 
-    private boolean ensureGenerationPlanner() {
-        if (generationPlanner != null) {
+    private boolean ensureGeneratedClassSynthesizer() {
+        if (generatedClassSynthesizer != null) {
             return true;
         }
 
         try {
-            MethodBodySynthesizer synthesizer = synthesisBackendFactory.create(processingEnv.getOptions(), this::note);
-            generationPlanner = new GenerationPlanner(
-                new AnnotationPropagationDecider(),
-                new DefaultMethodImplementationPlanner(synthesizer)
-            );
+            generatedClassSynthesizer = synthesisBackendFactory.create(processingEnv.getOptions(), this::note);
             return true;
         } catch (MethodBodySynthesisException exception) {
             error("Failed to configure compile-time synthesis: " + exception.getMessage());
@@ -210,46 +185,8 @@ public final class AimpProcessor extends AbstractProcessor {
         }
     }
 
-    private boolean loadConfig() {
-        if (configLoaded) {
-            return configValid;
-        }
-
-        configLoaded = true;
-        try {
-            config = configLoader.load(resolveProjectDir(), getClass().getClassLoader());
-        } catch (AimpConfigException exception) {
-            error("Failed to load " + AimpConfigLoader.CONFIG_FILE_NAME + ": " + exception.getMessage());
-            configValid = false;
-            return false;
-        }
-
-        for (String annotationName : config.annotationAllowlist()) {
-            TypeElement annotationType = processingEnv.getElementUtils().getTypeElement(annotationName);
-            if (annotationType == null) {
-                error("Configured propagation annotation was not found on the compilation classpath: " + annotationName);
-                configValid = false;
-                continue;
-            }
-            if (annotationType.getKind() != ElementKind.ANNOTATION_TYPE) {
-                error("Configured propagation type is not an annotation: " + annotationName);
-                configValid = false;
-            }
-        }
-
-        return configValid;
-    }
-
     private void note(String message) {
         messager.printMessage(Diagnostic.Kind.NOTE, message);
-    }
-
-    private Path resolveProjectDir() {
-        String configuredProjectDir = processingEnv.getOptions().get(OPTION_PROJECT_DIR);
-        if (configuredProjectDir != null && !configuredProjectDir.isBlank()) {
-            return Path.of(configuredProjectDir);
-        }
-        return Path.of(System.getProperty("user.dir"));
     }
 
     private ContractModel buildContract(TypeElement contractType, List<ExecutableElement> methods) {

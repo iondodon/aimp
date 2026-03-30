@@ -20,7 +20,7 @@ final class OpenAiResponsesParser {
             refusal = extractTopLevelStringField(json, "refusal");
         }
         if (refusal != null) {
-            throw new MethodBodySynthesisException("OpenAI refused to synthesize a method body: " + refusal);
+            throw new MethodBodySynthesisException("OpenAI refused to synthesize a generated class: " + refusal);
         }
 
         throw new MethodBodySynthesisException("OpenAI response did not contain output text.");
