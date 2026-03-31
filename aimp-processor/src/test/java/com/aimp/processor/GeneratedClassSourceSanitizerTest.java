@@ -1,7 +1,6 @@
 package com.aimp.processor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.aimp.model.ContractKind;
 import com.aimp.model.ContractModel;
@@ -88,40 +87,28 @@ class GeneratedClassSourceSanitizerTest {
     }
 
     @Test
-    void failsWhenModelReportsInsufficientContext() {
-        MethodBodySynthesisException exception = assertThrows(
-            MethodBodySynthesisException.class,
-            () -> GeneratedClassSourceSanitizer.sanitize(
-                GeneratedClassSourceSanitizer.INSUFFICIENT_CONTEXT_SENTINEL,
-                contract()
-            )
-        );
+    void stripsAbstractAndFinalFromGeneratedClassDeclaration() {
+        String sanitized = GeneratedClassSourceSanitizer.sanitize("""
+            package com.example.payment;
 
-        assertEquals(
-            "OpenAI reported insufficient contract context for com.example.payment.PaymentService. Add more context to @AIImplemented(\"...\") or the contract code.",
-            exception.getMessage()
-        );
-    }
-
-    @Test
-    void failsWhenModelReturnsOldUnsupportedOperationFallback() {
-        MethodBodySynthesisException exception = assertThrows(
-            MethodBodySynthesisException.class,
-            () -> GeneratedClassSourceSanitizer.sanitize("""
-                package com.example.payment;
-
-                public class PaymentService_AIGenerated implements PaymentService {
-                    public java.lang.String charge() {
-                        throw new java.lang.UnsupportedOperationException("AIMP could not synthesize a concrete implementation for com.example.payment.PaymentService#charge. Add more context to @AIImplemented(\\"...\\") or the contract code.");
-                    }
+            public abstract final class PaymentService_AIGenerated implements PaymentService {
+                @Override
+                public java.lang.String charge() {
+                    return "ok";
                 }
-                """, contract())
-        );
+            }
+            """, contract());
 
-        assertEquals(
-            "OpenAI reported insufficient contract context for com.example.payment.PaymentService. Add more context to @AIImplemented(\"...\") or the contract code.",
-            exception.getMessage()
-        );
+        assertEquals("""
+            package com.example.payment;
+
+            public class PaymentService_AIGenerated implements PaymentService {
+                @Override
+                public java.lang.String charge() {
+                    return "ok";
+                }
+            }
+            """.trim(), sanitized.trim());
     }
 
     private static ContractModel contract() {

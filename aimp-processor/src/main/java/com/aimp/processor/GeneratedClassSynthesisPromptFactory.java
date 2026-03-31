@@ -1,5 +1,7 @@
 package com.aimp.processor;
 
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.aimp.core.GeneratedTypeNaming;
 import com.aimp.model.ConstructorModel;
 import com.aimp.model.ContractKind;
@@ -9,79 +11,138 @@ import com.aimp.model.ParameterModel;
 import com.aimp.model.ReferencedTypeModel;
 import com.aimp.model.TypeParameterModel;
 import com.aimp.model.Visibility;
+import java.util.List;
 import java.util.stream.Collectors;
 
 final class GeneratedClassSynthesisPromptFactory {
     private GeneratedClassSynthesisPromptFactory() {
     }
 
-    static String prompt(ContractModel contract) {
-        StringBuilder builder = new StringBuilder();
-        builder.append("Generate the complete Java source file for the generated implementation class.\n");
-        builder.append("Return only raw Java source. Do not return markdown, code fences, or explanations.\n");
-        builder.append("Generate exactly one top-level class named ")
-            .append(GeneratedTypeNaming.generatedSimpleName(contract.simpleName()))
-            .append(" in package ")
-            .append(contract.packageName())
-            .append(".\n");
-        builder.append("The generated class must ")
-            .append(contract.kind() == ContractKind.INTERFACE ? "implement " : "extend ")
-            .append(contract.qualifiedName())
-            .append(".\n");
-        builder.append("Override every method annotated with @AIImplemented.\n");
-        builder.append("Preserve parameter names, varargs, type parameters, return types, and declared exceptions.\n");
-        builder.append("If the contract is an abstract class, generate constructors for every accessible superclass constructor and delegate to super(...).\n");
-        builder.append("Do not include @AIImplemented anywhere in the generated class.\n");
-        builder.append("You may add private constants, fields, and helper methods when needed.\n");
-        builder.append("If the handwritten contract contains framework or validation annotations that are needed on the generated implementation, copy them once to the legally applicable generated element.\n");
-        builder.append("Do not duplicate annotations. Do not emit both a declaration annotation and an equivalent type-use annotation for the same element.\n");
-        builder.append("Keep the output compilable as plain Java 21 source.\n");
-        builder.append("If the contract context is insufficient to implement real behavior, do not invent hidden infrastructure.\n");
-        builder.append("In that case, return exactly this single line and nothing else:\n");
-        builder.append(GeneratedClassSourceSanitizer.INSUFFICIENT_CONTEXT_SENTINEL).append('\n');
-        builder.append("Do not generate a fallback Java class in that case.\n");
-        builder.append("Generated class name: ").append(GeneratedTypeNaming.generatedSimpleName(contract.simpleName())).append('\n');
-        builder.append("Generated qualified name: ")
-            .append(GeneratedTypeNaming.generatedQualifiedName(contract.packageName(), contract.simpleName()))
-            .append('\n');
-        builder.append("Contract kind: ").append(contract.kind()).append('\n');
-        builder.append("Contract qualified name: ").append(contract.qualifiedName()).append('\n');
-        builder.append("Annotated methods:\n");
-        for (MethodModel method : contract.methods()) {
-            builder.append("- ").append(method.returnType()).append(' ').append(method.name())
-                .append(renderParameters(method.parameters()))
-                .append(renderThrows(method.thrownTypes()))
-                .append(" :: ")
-                .append(method.description())
-                .append('\n');
-        }
-        if (contract.constructors().isEmpty()) {
-            builder.append("Accessible constructors: none\n");
-        } else {
-            builder.append("Accessible constructors:\n");
-            for (ConstructorModel constructor : contract.constructors()) {
-                builder.append("- ")
-                    .append(renderVisibility(constructor.visibility()))
-                    .append(contract.simpleName())
-                    .append(renderParameters(constructor.parameters()))
-                    .append(renderThrows(constructor.thrownTypes()))
-                    .append('\n');
-            }
-        }
-        builder.append("Contract source:\n");
-        builder.append("```java\n");
-        builder.append(contractSource(contract));
-        builder.append("\n```\n");
-        if (!contract.referencedTypes().isEmpty()) {
-            builder.append("Referenced types with available source, including method signatures and accessible member context from the contract hierarchy:\n");
-            for (ReferencedTypeModel referencedType : contract.referencedTypes()) {
-                builder.append("Type: ").append(referencedType.qualifiedName()).append('\n');
-                builder.append("```java\n");
-                builder.append(referencedType.sourceSnippet());
-                builder.append("\n```\n");
-            }
-        }
-        return builder.toString();
+    static String prompt(
+        ContractModel contract,
+        List<ReferencedTypeModel> includedReferencedTypes,
+        List<String> availableNextLayerTypeNames,
+        int roundNumber,
+        int maxRounds
+    ) {
+        ObjectNode root = JsonSupport.objectNode();
+        root.put("protocolVersion", GeneratedClassSynthesisProtocol.PROTOCOL_VERSION);
+        root.put("task", "generate_generated_class");
+
+        ObjectNode round = root.putObject("round");
+        round.put("current", roundNumber);
+        round.put("max", maxRounds);
+
+        ObjectNode generationTarget = root.putObject("generationTarget");
+        generationTarget.put("packageName", contract.packageName());
+        generationTarget.put("generatedSimpleName", GeneratedTypeNaming.generatedSimpleName(contract.simpleName()));
+        generationTarget.put(
+            "generatedQualifiedName",
+            GeneratedTypeNaming.generatedQualifiedName(contract.packageName(), contract.simpleName())
+        );
+        generationTarget.put("relationship", contract.kind() == ContractKind.INTERFACE ? "implement" : "extend");
+        generationTarget.put("contractKind", contract.kind().name());
+        generationTarget.put("contractQualifiedName", contract.qualifiedName());
+
+        ObjectNode responseContract = root.putObject("responseContract");
+        responseContract.put("protocolVersion", GeneratedClassSynthesisProtocol.PROTOCOL_VERSION);
+        ArrayNode responseTypeValues = responseContract.putArray("responseTypeValues");
+        responseTypeValues.add(GeneratedClassSynthesisProtocol.RESPONSE_TYPE_GENERATED_CLASS);
+        responseTypeValues.add(GeneratedClassSynthesisProtocol.RESPONSE_TYPE_REQUEST_CONTEXT_TYPES);
+        responseTypeValues.add(GeneratedClassSynthesisProtocol.RESPONSE_TYPE_INSUFFICIENT_CONTEXT);
+        responseContract.put(
+            "generatedClassSourceRule",
+            "Use when responseType is generated_class. Return the full Java source file for the generated class."
+        );
+        responseContract.put(
+            "requestedTypeNamesRule",
+            "Use when responseType is request_context_types. Only request fully qualified names from availableNextLayerTypeNames."
+        );
+        responseContract.put(
+            "callerMessageRule",
+            "Use when responseType is insufficient_context. Ask the caller for missing business rules, examples, or handwritten code."
+        );
+
+        ArrayNode constraints = root.putArray("constraints");
+        addAll(
+            constraints,
+            List.of(
+                "Return exactly one JSON object and nothing else.",
+                "Do not return markdown or code fences.",
+                "Do not include @AIImplemented anywhere in generatedClassSource.",
+                "Generate a concrete, non-final class for the requested generatedSimpleName.",
+                "Preserve parameter names, varargs, type parameters, return types, and declared exceptions.",
+                "If the contract is an abstract class, generate constructors for every accessible superclass constructor and delegate to super(...).",
+                "You may add private constants, fields, and helper methods when needed.",
+                "Copy framework or validation annotations only when they are needed on the generated implementation.",
+                "Do not duplicate annotations or mix declaration annotations with equivalent type-use annotations on the same element.",
+                "Do not rely on private members of referenced types.",
+                "If availableNextLayerTypeNames is not empty and you need more source context, use responseType request_context_types before giving up.",
+                "Use responseType insufficient_context only when additional type layers will not solve the missing context."
+            )
+        );
+
+        ArrayNode annotatedMethods = root.putArray("annotatedMethods");
+        contract.methods().forEach(method -> annotatedMethods.add(methodNode(method)));
+
+        ArrayNode accessibleConstructors = root.putArray("accessibleConstructors");
+        contract.constructors().forEach(constructor -> accessibleConstructors.add(constructorNode(constructor, contract.simpleName())));
+
+        root.put("contractSource", contractSource(contract));
+
+        ArrayNode includedTypeContexts = root.putArray("includedTypeContexts");
+        includedReferencedTypes.forEach(referencedType -> includedTypeContexts.add(referencedTypeNode(referencedType)));
+
+        ArrayNode availableNextLayerTypes = root.putArray("availableNextLayerTypeNames");
+        addAll(availableNextLayerTypes, availableNextLayerTypeNames);
+
+        return JsonSupport.writeJson(root, "generated class synthesis prompt");
+    }
+
+    private static ObjectNode methodNode(MethodModel method) {
+        ObjectNode json = JsonSupport.objectNode();
+        json.put("name", method.name());
+        json.put("returnType", method.returnType());
+        json.put("visibility", method.visibility().keyword());
+        addAll(json.putArray("typeParameters"), method.typeParameters().stream().map(TypeParameterModel::declaration).toList());
+        addAll(json.putArray("annotations"), method.annotations().stream().map(annotation -> annotation.renderedSource()).toList());
+        addAll(json.putArray("thrownTypes"), method.thrownTypes());
+        ArrayNode parameters = json.putArray("parameters");
+        method.parameters().forEach(parameter -> parameters.add(parameterNode(parameter)));
+        json.put("description", method.description());
+        return json;
+    }
+
+    private static ObjectNode constructorNode(ConstructorModel constructor, String simpleName) {
+        ObjectNode json = JsonSupport.objectNode();
+        json.put("simpleName", simpleName);
+        json.put("visibility", constructor.visibility().keyword());
+        addAll(json.putArray("thrownTypes"), constructor.thrownTypes());
+        ArrayNode parameters = json.putArray("parameters");
+        constructor.parameters().forEach(parameter -> parameters.add(parameterNode(parameter)));
+        return json;
+    }
+
+    private static ObjectNode parameterNode(ParameterModel parameter) {
+        ObjectNode json = JsonSupport.objectNode();
+        json.put("name", parameter.name());
+        json.put("type", parameter.type());
+        json.put("varArgs", parameter.varArgs());
+        addAll(json.putArray("annotations"), parameter.annotations().stream().map(annotation -> annotation.renderedSource()).toList());
+        return json;
+    }
+
+    private static ObjectNode referencedTypeNode(ReferencedTypeModel referencedType) {
+        ObjectNode json = JsonSupport.objectNode();
+        json.put("qualifiedName", referencedType.qualifiedName());
+        json.put("layer", referencedType.layer());
+        json.put("source", referencedType.sourceSnippet());
+        addAll(json.putArray("nextLayerTypeNames"), referencedType.nextLayerTypeNames());
+        return json;
+    }
+
+    private static void addAll(ArrayNode array, List<String> values) {
+        values.forEach(array::add);
     }
 
     private static String contractSource(ContractModel contract) {

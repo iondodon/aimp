@@ -7,6 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.aimp.testkit.CompilationResult;
 import com.aimp.testkit.ProcessorCompilation;
 import com.aimp.testkit.SourceFile;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpServer;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -16,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import javax.tools.Diagnostic;
 import org.junit.jupiter.api.Test;
@@ -31,12 +35,13 @@ class AimpProcessorCompileTest {
     void generatesImplementationForInterface() throws Exception {
         CompilationResult result;
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
+            JsonNode requestJson = requestBodyJson(request);
+            JsonNode inputJson = requestInputJson(request);
             assertEquals("Bearer test-openai-key", request.authorization());
-            assertTrue(request.body().contains("\"model\":\"gpt-5\""));
-            assertTrue(request.body().contains("PaymentService"));
-            assertTrue(request.body().contains("charge"));
-            assertTrue(request.body().contains("Charge a payment and return the result"));
-            return openAiOutputText(PAYMENT_SERVICE_GENERATED_SOURCE);
+            assertEquals("gpt-5", requestJson.path("model").asText());
+            assertEquals("com.example.payment.PaymentService", inputJson.path("generationTarget").path("contractQualifiedName").asText());
+            assertEquals("Charge a payment and return the result", inputJson.path("annotatedMethods").get(0).path("description").asText());
+            return openAiOutputText(openAiGeneratedClassResponse(PAYMENT_SERVICE_GENERATED_SOURCE));
         })) {
             result = ProcessorCompilation.compile(
                 tempDir.resolve("interface-project"),
@@ -82,20 +87,20 @@ class AimpProcessorCompileTest {
     void openAiProviderGeneratesImplementation() throws Exception {
         CompilationResult result;
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
+            JsonNode requestJson = requestBodyJson(request);
+            JsonNode instructionsJson = requestInstructionsJson(request);
+            JsonNode inputJson = requestInputJson(request);
             assertEquals("Bearer test-openai-key", request.authorization());
-            assertTrue(request.body().contains("\"model\":\"gpt-5\""));
-            assertTrue(request.body().contains("\"instructions\":\"You synthesize full Java implementation classes"));
-            assertTrue(request.body().contains("\"input\":\"Generate the complete Java source file for the generated implementation class."));
-            assertTrue(request.body().contains("Generated class name: PaymentService_AIGenerated"));
-            assertTrue(request.body().contains("Contract source:"));
-            assertTrue(request.body().contains("Do not duplicate annotations."));
-            assertTrue(request.body().contains("public interface PaymentService"));
-            assertTrue(request.body().contains("@AIImplemented(\\\"Charge a payment and return the result\\\")"));
-            assertTrue(request.body().contains("Referenced types with available source, including method signatures and accessible member context from the contract hierarchy:"));
-            assertTrue(request.body().contains("public record PaymentRequest(String reference)"));
-            assertTrue(request.body().contains("public record PaymentResult(String status)"));
-            return openAiOutputText("""
-                ```java
+            assertEquals("gpt-5", requestJson.path("model").asText());
+            assertEquals("1", instructionsJson.path("protocolVersion").asText());
+            assertEquals("generate_generated_class", inputJson.path("task").asText());
+            assertEquals("PaymentService_AIGenerated", inputJson.path("generationTarget").path("generatedSimpleName").asText());
+            assertTrue(inputJson.path("contractSource").asText().contains("public interface PaymentService"));
+            assertSameElements(
+                List.of("com.example.payment.PaymentRequest", "com.example.payment.PaymentResult"),
+                textArray(inputJson.path("availableNextLayerTypeNames"))
+            );
+            return openAiOutputText(openAiGeneratedClassResponse("""
                 package com.example.payment;
 
                 public class PaymentService_AIGenerated implements PaymentService {
@@ -104,8 +109,7 @@ class AimpProcessorCompileTest {
                         return new com.example.payment.PaymentResult("approved-openai");
                     }
                 }
-                ```
-                """);
+                """));
         })) {
             result = ProcessorCompilation.compile(
                 tempDir.resolve("openai-project"),
@@ -160,8 +164,9 @@ class AimpProcessorCompileTest {
     void executesSynthesizedImplementation() throws Exception {
         CompilationResult result;
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
-            assertTrue(request.body().contains("answer"));
-            return openAiOutputText("""
+            JsonNode inputJson = requestInputJson(request);
+            assertEquals("answer", inputJson.path("annotatedMethods").get(0).path("name").asText());
+            return openAiOutputText(openAiGeneratedClassResponse("""
                 package com.example.echo;
 
                 public class EchoService_AIGenerated implements EchoService {
@@ -170,7 +175,7 @@ class AimpProcessorCompileTest {
                         return prompt + "-generated";
                     }
                 }
-                """);
+                """));
         })) {
             result = ProcessorCompilation.compile(
                 tempDir.resolve("runtime-project"),
@@ -209,12 +214,15 @@ class AimpProcessorCompileTest {
     void generatesSubclassWithoutAimpConfigAndLetsOpenAiDefineAnnotations() throws Exception {
         CompilationResult result;
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
-            assertTrue(request.body().contains("OrderServiceBase"));
-            assertTrue(request.body().contains("@Service"));
-            assertTrue(request.body().contains("@Transactional"));
-            assertTrue(request.body().contains("@Valid"));
-            assertTrue(request.body().contains("copy them once to the legally applicable generated element"));
-            return openAiOutputText("""
+            JsonNode inputJson = requestInputJson(request);
+            assertEquals("com.example.order.OrderServiceBase", inputJson.path("generationTarget").path("contractQualifiedName").asText());
+            assertTrue(inputJson.path("contractSource").asText().contains("@Service"));
+            assertTrue(inputJson.path("contractSource").asText().contains("@Transactional"));
+            assertTrue(inputJson.path("contractSource").asText().contains("@Valid"));
+            assertTrue(textArray(inputJson.path("constraints")).contains(
+                "Copy framework or validation annotations only when they are needed on the generated implementation."
+            ));
+            return openAiOutputText(openAiGeneratedClassResponse("""
                 package com.example.order;
 
                 @org.springframework.stereotype.Service
@@ -229,7 +237,7 @@ class AimpProcessorCompileTest {
                         return new com.example.order.OrderResult("reserved");
                     }
                 }
-                """);
+                """));
         })) {
             result = ProcessorCompilation.compile(
                 tempDir.resolve("abstract-project"),
@@ -325,14 +333,40 @@ class AimpProcessorCompileTest {
     @Test
     void promptIncludesTypesFromAccessibleMembersAndSuperclasses() throws Exception {
         CompilationResult result;
+        AtomicInteger requestCount = new AtomicInteger();
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
-            assertTrue(request.body().contains("Type: com.example.hierarchy.GreetingGateway"));
-            assertTrue(request.body().contains("public interface GreetingGateway {"));
-            assertTrue(request.body().contains("Type: com.example.hierarchy.AuditTrail"));
-            assertTrue(request.body().contains("public interface AuditTrail {"));
-            assertTrue(request.body().contains("Type: com.example.hierarchy.GreetingRequest"));
-            assertTrue(request.body().contains("Type: com.example.hierarchy.GreetingResponse"));
-            return openAiOutputText("""
+            JsonNode inputJson = requestInputJson(request);
+            int round = requestCount.incrementAndGet();
+            if (round == 1) {
+                assertSameElements(
+                    List.of(
+                        "com.example.hierarchy.GreetingGateway",
+                        "com.example.hierarchy.AuditTrail",
+                        "com.example.hierarchy.GreetingRequest",
+                        "com.example.hierarchy.GreetingResponse"
+                    ),
+                    textArray(inputJson.path("availableNextLayerTypeNames"))
+                );
+                assertFalse(inputJson.toString().contains("public interface GreetingGateway {"));
+                return openAiOutputText(openAiRequestContextTypesResponse(List.of(
+                    "com.example.hierarchy.GreetingGateway",
+                    "com.example.hierarchy.GreetingRequest",
+                    "com.example.hierarchy.GreetingResponse"
+                )));
+            }
+
+            assertEquals(2, round);
+            assertSameElements(
+                List.of(
+                    "com.example.hierarchy.GreetingGateway",
+                    "com.example.hierarchy.GreetingRequest",
+                    "com.example.hierarchy.GreetingResponse"
+                ),
+                textValues(inputJson.path("includedTypeContexts").findValues("qualifiedName"))
+            );
+            assertTrue(inputJson.toString().contains("public interface GreetingGateway {"));
+            assertFalse(inputJson.toString().contains("public interface AuditTrail {"));
+            return openAiOutputText(openAiGeneratedClassResponse("""
                 package com.example.hierarchy;
 
                 public class GreetingController_AIGenerated extends GreetingController {
@@ -348,7 +382,7 @@ class AimpProcessorCompileTest {
                         return this.gateway.greet(request);
                     }
                 }
-                """);
+                """));
         })) {
             result = ProcessorCompilation.compile(
                 tempDir.resolve("hierarchy-project"),
@@ -415,14 +449,29 @@ class AimpProcessorCompileTest {
         }
 
         assertTrue(result.success(), () -> String.join("\n", result.messages(javax.tools.Diagnostic.Kind.ERROR)));
+        assertEquals(2, requestCount.get());
+        assertTrue(
+            result.messages(Diagnostic.Kind.NOTE).stream()
+                .anyMatch(message -> message.contains(
+                    "AIMP OpenAI requested additional context for contract com.example.hierarchy.GreetingController -> generated type com.example.hierarchy.GreetingController_AIGenerated in round 1"
+                ))
+        );
     }
 
     @Test
     void insufficientContextFailsCompilation() throws Exception {
         CompilationResult result;
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
-            assertTrue(request.body().contains("AIMP_INSUFFICIENT_CONTEXT"));
-            return openAiOutputText(GeneratedClassSourceSanitizer.INSUFFICIENT_CONTEXT_SENTINEL);
+            JsonNode inputJson = requestInputJson(request);
+            assertTrue(textArray(inputJson.path("responseContract").path("responseTypeValues"))
+                .contains(GeneratedClassSynthesisProtocol.RESPONSE_TYPE_INSUFFICIENT_CONTEXT));
+            assertSameElements(
+                List.of("com.example.payment.PaymentRequest", "com.example.payment.PaymentResult"),
+                textArray(inputJson.path("availableNextLayerTypeNames"))
+            );
+            return openAiOutputText(openAiInsufficientContextResponse(
+                "Add concrete approval and rejection examples for request.reference()."
+            ));
         })) {
             result = ProcessorCompilation.compile(
                 tempDir.resolve("insufficient-context-project"),
@@ -459,11 +508,11 @@ class AimpProcessorCompileTest {
         assertFalse(result.success());
         assertTrue(
             result.messages(javax.tools.Diagnostic.Kind.ERROR).stream()
-                .anyMatch(message -> message.contains("insufficient contract context for com.example.payment.PaymentService"))
+                .anyMatch(message -> message.contains("requested more contract context for com.example.payment.PaymentService"))
         );
         assertTrue(
             result.messages(javax.tools.Diagnostic.Kind.ERROR).stream()
-                .anyMatch(message -> message.contains("Add more context to @AIImplemented(\"...\") or the contract code"))
+                .anyMatch(message -> message.contains("Add concrete approval and rejection examples for request.reference()."))
         );
     }
 
@@ -522,6 +571,39 @@ class AimpProcessorCompileTest {
         return outputStream.toByteArray();
     }
 
+    private static JsonNode requestBodyJson(OpenAiRequest request) {
+        return JsonSupport.readTree(request.body(), "OpenAI request body");
+    }
+
+    private static JsonNode requestInputJson(OpenAiRequest request) {
+        return JsonSupport.readTree(
+            JsonSupport.requireText(requestBodyJson(request), "input", "OpenAI request body"),
+            "OpenAI request input"
+        );
+    }
+
+    private static JsonNode requestInstructionsJson(OpenAiRequest request) {
+        return JsonSupport.readTree(
+            JsonSupport.requireText(requestBodyJson(request), "instructions", "OpenAI request body"),
+            "OpenAI request instructions"
+        );
+    }
+
+    private static List<String> textArray(JsonNode node) {
+        java.util.ArrayList<String> values = new java.util.ArrayList<>();
+        node.forEach(item -> values.add(item.asText()));
+        return List.copyOf(values);
+    }
+
+    private static List<String> textValues(List<JsonNode> nodes) {
+        return nodes.stream().map(JsonNode::asText).toList();
+    }
+
+    private static void assertSameElements(List<String> expected, List<String> actual) {
+        assertEquals(expected.size(), actual.size());
+        assertEquals(new java.util.LinkedHashSet<>(expected), new java.util.LinkedHashSet<>(actual));
+    }
+
     private record OpenAiRequest(String authorization, String body) {
     }
 
@@ -563,23 +645,42 @@ class AimpProcessorCompileTest {
         }
     }
 
-    private static String openAiOutputText(String javaBody) {
-        return """
-            {
-              "output": [
-                {
-                  "type": "message",
-                  "role": "assistant",
-                  "content": [
-                    {
-                      "type": "output_text",
-                      "text": "%s",
-                      "annotations": []
-                    }
-                  ]
-                }
-              ]
-            }
-            """.formatted(JsonStringFieldExtractor.escape(javaBody));
+    private static String openAiOutputText(String modelOutput) {
+        ObjectNode root = JsonSupport.objectNode();
+        ArrayNode output = root.putArray("output");
+        ObjectNode message = output.addObject();
+        message.put("type", "message");
+        message.put("role", "assistant");
+        ArrayNode content = message.putArray("content");
+        ObjectNode outputText = content.addObject();
+        outputText.put("type", "output_text");
+        outputText.put("text", modelOutput);
+        outputText.putArray("annotations");
+        return JsonSupport.writeJson(root, "fake OpenAI output");
+    }
+
+    private static String openAiGeneratedClassResponse(String javaSource) {
+        ObjectNode root = JsonSupport.objectNode();
+        root.put("protocolVersion", GeneratedClassSynthesisProtocol.PROTOCOL_VERSION);
+        root.put("responseType", GeneratedClassSynthesisProtocol.RESPONSE_TYPE_GENERATED_CLASS);
+        root.put("generatedClassSource", javaSource);
+        return JsonSupport.writeJson(root, "generated class response");
+    }
+
+    private static String openAiRequestContextTypesResponse(List<String> requestedTypeNames) {
+        ObjectNode root = JsonSupport.objectNode();
+        root.put("protocolVersion", GeneratedClassSynthesisProtocol.PROTOCOL_VERSION);
+        root.put("responseType", GeneratedClassSynthesisProtocol.RESPONSE_TYPE_REQUEST_CONTEXT_TYPES);
+        ArrayNode requestedTypes = root.putArray("requestedTypeNames");
+        requestedTypeNames.forEach(requestedTypes::add);
+        return JsonSupport.writeJson(root, "request context types response");
+    }
+
+    private static String openAiInsufficientContextResponse(String callerMessage) {
+        ObjectNode root = JsonSupport.objectNode();
+        root.put("protocolVersion", GeneratedClassSynthesisProtocol.PROTOCOL_VERSION);
+        root.put("responseType", GeneratedClassSynthesisProtocol.RESPONSE_TYPE_INSUFFICIENT_CONTEXT);
+        root.put("callerMessage", callerMessage);
+        return JsonSupport.writeJson(root, "insufficient context response");
     }
 }

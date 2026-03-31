@@ -6,9 +6,26 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * Filters contract annotations down to the subset that may be copied to generated source.
+ */
 public final class AnnotationPropagationDecider {
     private static final String AI_IMPLEMENTED_ANNOTATION = "com.aimp.annotations.AIImplemented";
 
+    /**
+     * Creates a stateless annotation propagation decider.
+     */
+    public AnnotationPropagationDecider() {
+    }
+
+    /**
+     * Returns the annotations that should be propagated to the given generated element kind.
+     *
+     * @param annotations the candidate annotations from handwritten source
+     * @param allowlist the allowed annotation type names
+     * @param targetKind the generated element kind receiving propagated annotations
+     * @return the propagated annotations in deterministic order
+     */
     public List<AnnotationUsage> propagate(
         List<AnnotationUsage> annotations,
         Set<String> allowlist,

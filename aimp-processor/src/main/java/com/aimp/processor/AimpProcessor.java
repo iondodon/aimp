@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -66,6 +67,8 @@ import javax.tools.JavaFileObject;
  * generates concrete implementations in generated sources.
  */
 public final class AimpProcessor extends AbstractProcessor {
+    private static final int MAX_REFERENCED_TYPE_CONTEXT_DEPTH = 2;
+
     private final ProcessorSynthesisBackendFactory synthesisBackendFactory = new ProcessorSynthesisBackendFactory();
     private final Set<String> generatedTypeNames = new TreeSet<>();
 
@@ -365,21 +368,90 @@ public final class AimpProcessor extends AbstractProcessor {
     }
 
     private List<ReferencedTypeModel> collectReferencedTypes(TypeElement contractType, List<ExecutableElement> methods) {
+        String contractPackage = processingEnv.getElementUtils().getPackageOf(contractType).getQualifiedName().toString();
+        String contractQualifiedName = contractType.getQualifiedName().toString();
+
         LinkedHashMap<String, ReferencedTypeModel> referencedTypes = new LinkedHashMap<>();
-        ReferencedTypeCollector collector = new ReferencedTypeCollector(contractType, referencedTypes);
+        LinkedHashSet<TypeElement> currentLayer = collectDirectReferencedTypes(contractType, methods, contractPackage);
+        LinkedHashSet<String> queuedTypeNames = currentLayer.stream()
+            .map(type -> type.getQualifiedName().toString())
+            .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+
+        for (int layer = 1; layer <= MAX_REFERENCED_TYPE_CONTEXT_DEPTH && !currentLayer.isEmpty(); layer++) {
+            LinkedHashSet<TypeElement> nextLayer = new LinkedHashSet<>();
+            for (TypeElement typeElement : currentLayer) {
+                String qualifiedName = typeElement.getQualifiedName().toString();
+                if (qualifiedName.equals(contractQualifiedName) || referencedTypes.containsKey(qualifiedName)) {
+                    continue;
+                }
+
+                String sourceSnippet = extractTypeSourceSnippet(typeElement);
+                if (sourceSnippet.isBlank()) {
+                    continue;
+                }
+
+                List<String> nextLayerTypeNames = layer < MAX_REFERENCED_TYPE_CONTEXT_DEPTH
+                    ? collectDirectReferencedTypes(typeElement, contractPackage).stream()
+                        .map(TypeElement::getQualifiedName)
+                        .map(Object::toString)
+                        .filter(typeName -> !typeName.equals(contractQualifiedName))
+                        .filter(typeName -> !typeName.equals(qualifiedName))
+                        .toList()
+                    : List.of();
+
+                referencedTypes.put(
+                    qualifiedName,
+                    new ReferencedTypeModel(qualifiedName, sourceSnippet, layer, nextLayerTypeNames)
+                );
+
+                if (layer >= MAX_REFERENCED_TYPE_CONTEXT_DEPTH) {
+                    continue;
+                }
+                for (String nextTypeName : nextLayerTypeNames) {
+                    if (queuedTypeNames.contains(nextTypeName)) {
+                        continue;
+                    }
+                    TypeElement nextType = processingEnv.getElementUtils().getTypeElement(nextTypeName);
+                    if (nextType == null) {
+                        continue;
+                    }
+                    if (extractTypeSourceSnippet(nextType).isBlank()) {
+                        continue;
+                    }
+                    queuedTypeNames.add(nextTypeName);
+                    nextLayer.add(nextType);
+                }
+            }
+            currentLayer = nextLayer;
+        }
+
+        return List.copyOf(referencedTypes.values());
+    }
+
+    private LinkedHashSet<TypeElement> collectDirectReferencedTypes(
+        TypeElement contractType,
+        List<ExecutableElement> methods,
+        String contractPackage
+    ) {
+        DirectTypeCollector collector = new DirectTypeCollector(contractType.getQualifiedName().toString());
         for (ExecutableElement method : methods) {
             collector.visit(method.getReturnType(), null);
             for (VariableElement parameter : method.getParameters()) {
                 collector.visit(parameter.asType(), null);
             }
         }
-        collectAccessibleMemberTypes(contractType, collector);
-        return List.copyOf(referencedTypes.values());
+        collectAccessibleMemberTypes(contractType, contractPackage, collector);
+        return collector.collectedTypes();
     }
 
-    private void collectAccessibleMemberTypes(TypeElement contractType, ReferencedTypeCollector collector) {
-        String contractPackage = processingEnv.getElementUtils().getPackageOf(contractType).getQualifiedName().toString();
-        TypeElement currentType = contractType;
+    private LinkedHashSet<TypeElement> collectDirectReferencedTypes(TypeElement rootType, String contractPackage) {
+        DirectTypeCollector collector = new DirectTypeCollector(rootType.getQualifiedName().toString());
+        collectAccessibleMemberTypes(rootType, contractPackage, collector);
+        return collector.collectedTypes();
+    }
+
+    private void collectAccessibleMemberTypes(TypeElement rootType, String contractPackage, DirectTypeCollector collector) {
+        TypeElement currentType = rootType;
         boolean declaringContract = true;
         while (currentType != null) {
             String currentPackage = processingEnv.getElementUtils().getPackageOf(currentType).getQualifiedName().toString();
@@ -413,7 +485,7 @@ public final class AimpProcessor extends AbstractProcessor {
         }
     }
 
-    private void collectExecutableReferencedTypes(ExecutableElement executable, ReferencedTypeCollector collector) {
+    private void collectExecutableReferencedTypes(ExecutableElement executable, DirectTypeCollector collector) {
         collector.visit(executable.getReturnType(), null);
         for (VariableElement parameter : executable.getParameters()) {
             collector.visit(parameter.asType(), null);
@@ -457,24 +529,24 @@ public final class AimpProcessor extends AbstractProcessor {
         return typeMirror.accept(new AnnotationFreeTypeRenderer(), null);
     }
 
-    private final class ReferencedTypeCollector extends SimpleTypeVisitor14<Void, Void> {
-        private final String contractQualifiedName;
-        private final LinkedHashMap<String, ReferencedTypeModel> referencedTypes;
+    private static final class DirectTypeCollector extends SimpleTypeVisitor14<Void, Void> {
+        private final String rootQualifiedName;
+        private final LinkedHashMap<String, TypeElement> collectedTypes = new LinkedHashMap<>();
 
-        private ReferencedTypeCollector(TypeElement contractType, LinkedHashMap<String, ReferencedTypeModel> referencedTypes) {
-            this.contractQualifiedName = contractType.getQualifiedName().toString();
-            this.referencedTypes = referencedTypes;
+        private DirectTypeCollector(String rootQualifiedName) {
+            this.rootQualifiedName = rootQualifiedName;
         }
 
         private void collectTypeElement(TypeElement typeElement) {
             String qualifiedName = typeElement.getQualifiedName().toString();
-            if (qualifiedName.equals(contractQualifiedName) || referencedTypes.containsKey(qualifiedName)) {
+            if (qualifiedName.equals(rootQualifiedName)) {
                 return;
             }
-            String sourceSnippet = extractTypeSourceSnippet(typeElement);
-            if (!sourceSnippet.isBlank()) {
-                referencedTypes.put(qualifiedName, new ReferencedTypeModel(qualifiedName, sourceSnippet));
-            }
+            collectedTypes.putIfAbsent(qualifiedName, typeElement);
+        }
+
+        private LinkedHashSet<TypeElement> collectedTypes() {
+            return new LinkedHashSet<>(collectedTypes.values());
         }
 
         @Override

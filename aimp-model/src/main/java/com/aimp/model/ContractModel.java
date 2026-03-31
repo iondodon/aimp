@@ -2,6 +2,21 @@ package com.aimp.model;
 
 import java.util.List;
 
+/**
+ * Describes a handwritten interface or abstract class to implement.
+ *
+ * @param packageName the contract package name
+ * @param simpleName the contract simple name
+ * @param qualifiedName the contract fully qualified name
+ * @param kind the contract kind
+ * @param visibility the contract visibility
+ * @param sourceSnippet the contract source snippet when available
+ * @param referencedTypes referenced types that may be supplied as extra context
+ * @param typeParameters the contract type parameters
+ * @param annotations annotations declared on the contract type
+ * @param constructors constructors declared by the contract
+ * @param methods annotated abstract methods to implement
+ */
 public record ContractModel(
     String packageName,
     String simpleName,
@@ -15,6 +30,21 @@ public record ContractModel(
     List<ConstructorModel> constructors,
     List<MethodModel> methods
 ) {
+    /**
+     * Creates an immutable contract model.
+     *
+     * @param packageName the contract package name
+     * @param simpleName the contract simple name
+     * @param qualifiedName the contract fully qualified name
+     * @param kind the contract kind
+     * @param visibility the contract visibility
+     * @param sourceSnippet the contract source snippet when available
+     * @param referencedTypes referenced types that may be supplied as extra context
+     * @param typeParameters the contract type parameters
+     * @param annotations annotations declared on the contract type
+     * @param constructors constructors declared by the contract
+     * @param methods annotated abstract methods to implement
+     */
     public ContractModel {
         sourceSnippet = sourceSnippet == null ? "" : sourceSnippet;
         referencedTypes = List.copyOf(referencedTypes);

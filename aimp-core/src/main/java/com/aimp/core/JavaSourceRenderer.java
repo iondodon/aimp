@@ -11,17 +11,34 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * Renders a generated type plan into Java source code.
+ */
 public final class JavaSourceRenderer {
     private final MethodBodyRenderer methodBodyRenderer;
 
+    /**
+     * Creates a renderer that writes method bodies with the default LLM body renderer.
+     */
     public JavaSourceRenderer() {
         this(new LlmMethodBodyRenderer());
     }
 
+    /**
+     * Creates a renderer that delegates method body rendering to the given collaborator.
+     *
+     * @param methodBodyRenderer renders generated method bodies
+     */
     public JavaSourceRenderer(MethodBodyRenderer methodBodyRenderer) {
         this.methodBodyRenderer = methodBodyRenderer;
     }
 
+    /**
+     * Renders the given generated type plan as complete Java source.
+     *
+     * @param plan the generated type plan to render
+     * @return the rendered Java source
+     */
     public String render(GeneratedTypePlan plan) {
         JavaSourceWriter writer = new JavaSourceWriter();
 

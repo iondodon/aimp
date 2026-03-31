@@ -12,10 +12,16 @@ import com.aimp.model.ParameterModel;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * Builds a deterministic generated type plan from discovered contract metadata.
+ */
 public final class GenerationPlanner {
     private final AnnotationPropagationDecider annotationPropagationDecider;
     private final MethodImplementationPlanner methodImplementationPlanner;
 
+    /**
+     * Creates a planner with default propagation and placeholder method planning behavior.
+     */
     public GenerationPlanner() {
         this(
             new AnnotationPropagationDecider(),
@@ -27,6 +33,12 @@ public final class GenerationPlanner {
         );
     }
 
+    /**
+     * Creates a planner with custom annotation propagation and method planning collaborators.
+     *
+     * @param annotationPropagationDecider decides which annotations to copy
+     * @param methodImplementationPlanner plans generated method bodies
+     */
     public GenerationPlanner(
         AnnotationPropagationDecider annotationPropagationDecider,
         MethodImplementationPlanner methodImplementationPlanner
@@ -35,6 +47,13 @@ public final class GenerationPlanner {
         this.methodImplementationPlanner = methodImplementationPlanner;
     }
 
+    /**
+     * Builds the generated type plan for a handwritten contract.
+     *
+     * @param contract the handwritten contract metadata
+     * @param config the AIMP configuration
+     * @return the generated type plan
+     */
     public GeneratedTypePlan plan(ContractModel contract, AimpConfig config) {
         Set<String> allowlist = config.annotationAllowlist();
 

@@ -1,23 +1,29 @@
 package com.aimp.processor;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 final class OpenAiResponsesParser {
     private OpenAiResponsesParser() {
     }
 
     static String extractOutputText(String json) {
-        String nestedOutputText = extractNestedOutputText(json);
+        JsonNode root = JsonSupport.readTree(json, "OpenAI response");
+        String nestedOutputText = extractNestedOutputText(root.get("output"));
         if (nestedOutputText != null) {
             return nestedOutputText;
         }
 
-        String topLevelOutputText = extractTopLevelStringField(json, "output_text");
+        String topLevelOutputText = extractOutputTextNode(root.get("output_text"));
         if (topLevelOutputText != null) {
             return topLevelOutputText;
         }
 
-        String refusal = extractNestedRefusal(json);
+        String refusal = extractNestedRefusal(root.get("output"));
         if (refusal == null) {
-            refusal = extractTopLevelStringField(json, "refusal");
+            JsonNode topLevelRefusal = root.get("refusal");
+            if (topLevelRefusal != null && topLevelRefusal.isTextual()) {
+                refusal = topLevelRefusal.asText();
+            }
         }
         if (refusal != null) {
             throw new MethodBodySynthesisException("OpenAI refused to synthesize a generated class: " + refusal);
@@ -26,79 +32,70 @@ final class OpenAiResponsesParser {
         throw new MethodBodySynthesisException("OpenAI response did not contain output text.");
     }
 
-    private static String extractNestedOutputText(String json) {
-        int outputIndex = json.indexOf("\"output\"");
-        if (outputIndex < 0) {
+    private static String extractNestedOutputText(JsonNode output) {
+        if (output == null || !output.isArray()) {
             return null;
         }
 
-        int searchIndex = outputIndex;
-        while (true) {
-            int typeIndex = json.indexOf("\"type\"", searchIndex);
-            if (typeIndex < 0) {
-                return null;
+        for (JsonNode outputItem : output) {
+            JsonNode content = outputItem.get("content");
+            if (content == null || !content.isArray()) {
+                continue;
             }
-
-            String type = JsonStringFieldExtractor.extractOptionalStringAfter(json, "type", typeIndex);
-            if ("output_text".equals(type)) {
-                return JsonStringFieldExtractor.extractRequiredString(
-                    json.substring(typeIndex),
-                    "text"
-                );
+            for (JsonNode contentItem : content) {
+                if ("output_text".equals(contentItem.path("type").asText(null))) {
+                    JsonNode text = contentItem.get("text");
+                    if (text != null && text.isTextual()) {
+                        return text.asText();
+                    }
+                }
             }
-
-            searchIndex = typeIndex + "\"type\"".length();
         }
+        return null;
     }
 
-    private static String extractNestedRefusal(String json) {
-        int outputIndex = json.indexOf("\"output\"");
-        if (outputIndex < 0) {
+    private static String extractNestedRefusal(JsonNode output) {
+        if (output == null || !output.isArray()) {
             return null;
         }
 
-        int searchIndex = outputIndex;
-        while (true) {
-            int typeIndex = json.indexOf("\"type\"", searchIndex);
-            if (typeIndex < 0) {
-                return null;
+        for (JsonNode outputItem : output) {
+            JsonNode content = outputItem.get("content");
+            if (content == null || !content.isArray()) {
+                continue;
             }
-
-            String type = JsonStringFieldExtractor.extractOptionalStringAfter(json, "type", typeIndex);
-            if ("refusal".equals(type)) {
-                return JsonStringFieldExtractor.extractRequiredString(
-                    json.substring(typeIndex),
-                    "refusal"
-                );
+            for (JsonNode contentItem : content) {
+                if ("refusal".equals(contentItem.path("type").asText(null))) {
+                    JsonNode refusal = contentItem.get("refusal");
+                    if (refusal != null && refusal.isTextual()) {
+                        return refusal.asText();
+                    }
+                }
             }
-
-            searchIndex = typeIndex + "\"type\"".length();
         }
+        return null;
     }
 
-    private static String extractTopLevelStringField(String json, String fieldName) {
-        String marker = "\"" + fieldName + "\"";
-        int markerIndex = json.indexOf(marker);
-        if (markerIndex < 0) {
+    private static String extractOutputTextNode(JsonNode outputText) {
+        if (outputText == null || outputText.isNull()) {
             return null;
         }
-
-        int colonIndex = json.indexOf(':', markerIndex + marker.length());
-        if (colonIndex < 0) {
-            throw new MethodBodySynthesisException("Synthesis response field '" + fieldName + "' is malformed.");
+        if (outputText.isTextual()) {
+            return outputText.asText();
         }
-
-        int valueStart = colonIndex + 1;
-        while (valueStart < json.length() && Character.isWhitespace(json.charAt(valueStart))) {
-            valueStart++;
+        if (outputText.isArray()) {
+            for (JsonNode item : outputText) {
+                if (item.isTextual()) {
+                    return item.asText();
+                }
+                if (item.path("type").asText("").equals("output_text")) {
+                    JsonNode text = item.get("text");
+                    if (text != null && text.isTextual()) {
+                        return text.asText();
+                    }
+                }
+            }
         }
-        if (valueStart >= json.length()) {
-            throw new MethodBodySynthesisException("Synthesis response field '" + fieldName + "' is malformed.");
-        }
-        if (json.charAt(valueStart) != '"') {
-            return null;
-        }
-
-        return JsonStringFieldExtractor.extractOptionalStringAfter(json, fieldName, 0);
+        return null;
     }
 }
