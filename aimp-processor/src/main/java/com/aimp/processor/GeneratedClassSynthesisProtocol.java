@@ -23,6 +23,7 @@ final class GeneratedClassSynthesisProtocol {
         outputRules.add("Return exactly one JSON object and nothing else.");
         outputRules.add("Do not return markdown or code fences.");
         outputRules.add("The JSON response must include protocolVersion and responseType.");
+        outputRules.add("Use only the responseType values listed in input.responseContract.responseTypeValues for the current round.");
 
         ObjectNode responseContract = root.putObject("responseContract");
         ArrayNode responseTypeValues = responseContract.putArray("responseTypeValues");

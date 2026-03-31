@@ -14,4 +14,5 @@ dependencies {
 
 tasks.withType<JavaCompile>().configureEach {
     options.compilerArgs.add("-Aaimp.synthesis.model=gpt-5")
+    options.compilerArgs.add("-Aaimp.synthesis.timeoutMillis=60000")
 }

@@ -1,11 +1,23 @@
 package com.aimp.processor;
 
 import com.aimp.core.GeneratedTypeNaming;
+import com.aimp.model.AnnotationUsage;
 import com.aimp.model.ContractKind;
 import com.aimp.model.ContractModel;
+import com.aimp.model.ConstructorModel;
+import com.aimp.model.MethodModel;
+import com.aimp.model.ParameterModel;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 final class GeneratedClassSourceSanitizer {
+    private static final Pattern IMPORT_PATTERN = Pattern.compile("(?m)^import\\s+([^;]+);\\s*$");
+    private static final Pattern PACKAGE_PATTERN = Pattern.compile("(?m)^package\\s+[^;]+;\\s*$");
+    private static final Pattern QUALIFIED_TYPE_PATTERN = Pattern.compile("\\b(?:[a-z_]\\w*\\.)+[A-Z_$][\\w$]*\\b");
+
     private GeneratedClassSourceSanitizer() {
     }
 
@@ -14,6 +26,7 @@ final class GeneratedClassSourceSanitizer {
         sanitized = stripAiImplementedImport(sanitized);
         sanitized = stripAiImplementedAnnotations(sanitized).trim();
         sanitized = normalizeGeneratedClassModifiers(sanitized, contract);
+        sanitized = mergeRequiredImports(sanitized, contract);
         sanitized = collapseBlankLines(sanitized);
         if (sanitized.isBlank()) {
             throw new MethodBodySynthesisException("OpenAI synthesis returned an empty generated class.");
@@ -37,6 +50,104 @@ final class GeneratedClassSourceSanitizer {
             ""
         );
         return sanitized;
+    }
+
+    private static String mergeRequiredImports(String source, ContractModel contract) {
+        String normalized = source.replace("\r\n", "\n");
+        TreeSet<String> imports = new TreeSet<>(extractExistingImports(normalized));
+        imports.addAll(requiredImports(contract));
+        if (imports.isEmpty()) {
+            return normalized;
+        }
+
+        Matcher packageMatcher = PACKAGE_PATTERN.matcher(normalized);
+        String packageDeclaration = "";
+        int bodyStart = 0;
+        if (packageMatcher.find()) {
+            packageDeclaration = packageMatcher.group().trim();
+            bodyStart = packageMatcher.end();
+        }
+
+        String body = normalized.substring(bodyStart);
+        body = IMPORT_PATTERN.matcher(body).replaceAll("");
+        body = body.replaceFirst("^\\s+", "");
+
+        StringBuilder builder = new StringBuilder(normalized.length() + imports.size() * 32);
+        if (!packageDeclaration.isEmpty()) {
+            builder.append(packageDeclaration).append("\n\n");
+        }
+        for (String importType : imports) {
+            builder.append("import ").append(importType).append(";\n");
+        }
+        if (!imports.isEmpty()) {
+            builder.append('\n');
+        }
+        builder.append(body);
+        return builder.toString().trim();
+    }
+
+    private static Set<String> extractExistingImports(String source) {
+        TreeSet<String> imports = new TreeSet<>();
+        Matcher matcher = IMPORT_PATTERN.matcher(source);
+        while (matcher.find()) {
+            imports.add(matcher.group(1).trim());
+        }
+        return imports;
+    }
+
+    private static Set<String> requiredImports(ContractModel contract) {
+        LinkedHashSet<String> imports = new LinkedHashSet<>();
+        contract.annotations().forEach(annotation -> collectImportType(imports, annotation.typeName(), contract));
+        for (ConstructorModel constructor : contract.constructors()) {
+            constructor.parameters().forEach(parameter -> collectImports(imports, parameter, contract));
+            constructor.thrownTypes().forEach(type -> collectQualifiedTypes(imports, type, contract));
+        }
+        for (MethodModel method : contract.methods()) {
+            collectQualifiedTypes(imports, method.returnType(), contract);
+            method.annotations().forEach(annotation -> collectImportType(imports, annotation.typeName(), contract));
+            method.parameters().forEach(parameter -> collectImports(imports, parameter, contract));
+            method.thrownTypes().forEach(type -> collectQualifiedTypes(imports, type, contract));
+        }
+        return imports;
+    }
+
+    private static void collectImports(LinkedHashSet<String> imports, ParameterModel parameter, ContractModel contract) {
+        collectQualifiedTypes(imports, parameter.type(), contract);
+        for (AnnotationUsage annotation : parameter.annotations()) {
+            collectImportType(imports, annotation.typeName(), contract);
+        }
+    }
+
+    private static void collectImportType(LinkedHashSet<String> imports, String typeName, ContractModel contract) {
+        if (typeName == null || typeName.isBlank()) {
+            return;
+        }
+        addImportCandidate(imports, typeName, contract);
+    }
+
+    private static void collectQualifiedTypes(LinkedHashSet<String> imports, String renderedType, ContractModel contract) {
+        if (renderedType == null || renderedType.isBlank()) {
+            return;
+        }
+        Matcher matcher = QUALIFIED_TYPE_PATTERN.matcher(renderedType);
+        while (matcher.find()) {
+            addImportCandidate(imports, matcher.group(), contract);
+        }
+    }
+
+    private static void addImportCandidate(LinkedHashSet<String> imports, String qualifiedTypeName, ContractModel contract) {
+        int lastDot = qualifiedTypeName.lastIndexOf('.');
+        if (lastDot < 0) {
+            return;
+        }
+        String packageName = qualifiedTypeName.substring(0, lastDot);
+        if (packageName.equals("java.lang") || packageName.equals(contract.packageName())) {
+            return;
+        }
+        if (qualifiedTypeName.equals(contract.qualifiedName())) {
+            return;
+        }
+        imports.add(qualifiedTypeName);
     }
 
     private static void validatePackage(ContractModel contract, String source) {

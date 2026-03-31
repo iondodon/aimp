@@ -40,7 +40,11 @@ class AimpProcessorCompileTest {
             assertEquals("Bearer test-openai-key", request.authorization());
             assertEquals("gpt-5", requestJson.path("model").asText());
             assertEquals("com.example.payment.PaymentService", inputJson.path("generationTarget").path("contractQualifiedName").asText());
-            assertEquals("Charge a payment and return the result", inputJson.path("annotatedMethods").get(0).path("description").asText());
+            assertTrue(inputJson.path("contractSource").asText().contains("package com.example.payment;"));
+            assertTrue(inputJson.path("contractSource").asText().contains("import com.aimp.annotations.AIImplemented;"));
+            assertTrue(inputJson.path("contractSource").asText().contains("@AIImplemented(\"Charge a payment and return the result\")"));
+            assertTrue(inputJson.path("annotatedMethods").isMissingNode());
+            assertTrue(inputJson.path("accessibleConstructors").isMissingNode());
             return openAiOutputText(openAiGeneratedClassResponse(PAYMENT_SERVICE_GENERATED_SOURCE));
         })) {
             result = ProcessorCompilation.compile(
@@ -165,7 +169,9 @@ class AimpProcessorCompileTest {
         CompilationResult result;
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
             JsonNode inputJson = requestInputJson(request);
-            assertEquals("answer", inputJson.path("annotatedMethods").get(0).path("name").asText());
+            assertTrue(inputJson.path("contractSource").asText().contains("String answer(String prompt);"));
+            assertTrue(inputJson.path("annotatedMethods").isMissingNode());
+            assertTrue(inputJson.path("accessibleConstructors").isMissingNode());
             return openAiOutputText(openAiGeneratedClassResponse("""
                 package com.example.echo;
 
@@ -340,32 +346,51 @@ class AimpProcessorCompileTest {
             if (round == 1) {
                 assertSameElements(
                     List.of(
-                        "com.example.hierarchy.GreetingGateway",
-                        "com.example.hierarchy.AuditTrail",
                         "com.example.hierarchy.GreetingRequest",
                         "com.example.hierarchy.GreetingResponse"
                     ),
                     textArray(inputJson.path("availableNextLayerTypeNames"))
                 );
-                assertFalse(inputJson.toString().contains("public interface GreetingGateway {"));
+                assertFalse(textArray(inputJson.path("availableNextLayerTypeNames")).contains("com.example.hierarchy.GreetingGateway"));
+                assertFalse(textArray(inputJson.path("availableNextLayerTypeNames")).contains("com.example.hierarchy.AuditTrail"));
                 return openAiOutputText(openAiRequestContextTypesResponse(List.of(
-                    "com.example.hierarchy.GreetingGateway",
                     "com.example.hierarchy.GreetingRequest",
                     "com.example.hierarchy.GreetingResponse"
                 )));
             }
 
-            assertEquals(2, round);
+            if (round == 2) {
+                assertSameElements(
+                    List.of(
+                        "com.example.hierarchy.GreetingRequest",
+                        "com.example.hierarchy.GreetingResponse"
+                    ),
+                    textValues(inputJson.path("includedTypeContexts").findValues("qualifiedName"))
+                );
+                assertSameElements(
+                    List.of(
+                        "com.example.hierarchy.GreetingGateway",
+                        "com.example.hierarchy.AuditTrail"
+                    ),
+                    textArray(inputJson.path("availableNextLayerTypeNames"))
+                );
+                return openAiOutputText(openAiRequestContextTypesResponse(List.of(
+                    "com.example.hierarchy.GreetingGateway",
+                    "com.example.hierarchy.AuditTrail"
+                )));
+            }
+
+            assertEquals(3, round);
             assertSameElements(
                 List.of(
-                    "com.example.hierarchy.GreetingGateway",
                     "com.example.hierarchy.GreetingRequest",
-                    "com.example.hierarchy.GreetingResponse"
+                    "com.example.hierarchy.GreetingResponse",
+                    "com.example.hierarchy.GreetingGateway",
+                    "com.example.hierarchy.AuditTrail"
                 ),
                 textValues(inputJson.path("includedTypeContexts").findValues("qualifiedName"))
             );
-            assertTrue(inputJson.toString().contains("public interface GreetingGateway {"));
-            assertFalse(inputJson.toString().contains("public interface AuditTrail {"));
+            assertTrue(textArray(inputJson.path("availableNextLayerTypeNames")).isEmpty());
             return openAiOutputText(openAiGeneratedClassResponse("""
                 package com.example.hierarchy;
 
@@ -449,13 +474,81 @@ class AimpProcessorCompileTest {
         }
 
         assertTrue(result.success(), () -> String.join("\n", result.messages(javax.tools.Diagnostic.Kind.ERROR)));
-        assertEquals(2, requestCount.get());
+        assertEquals(3, requestCount.get());
         assertTrue(
             result.messages(Diagnostic.Kind.NOTE).stream()
                 .anyMatch(message -> message.contains(
                     "AIMP OpenAI requested additional context for contract com.example.hierarchy.GreetingController -> generated type com.example.hierarchy.GreetingController_AIGenerated in round 1"
                 ))
         );
+        assertTrue(
+            result.messages(Diagnostic.Kind.NOTE).stream()
+                .anyMatch(message -> message.contains(
+                    "AIMP OpenAI requested additional context for contract com.example.hierarchy.GreetingController -> generated type com.example.hierarchy.GreetingController_AIGenerated in round 2"
+                ))
+        );
+    }
+
+    @Test
+    void promptFallsBackToAccessibleMemberTypesWhenMethodSignatureHasNoSourceAvailableTypes() throws Exception {
+        CompilationResult result;
+        try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
+            JsonNode inputJson = requestInputJson(request);
+            assertSameElements(
+                List.of("com.example.noargs.Helper"),
+                textArray(inputJson.path("availableNextLayerTypeNames"))
+            );
+            assertTrue(inputJson.path("includedTypeContexts").isArray());
+            assertEquals(0, inputJson.path("includedTypeContexts").size());
+            return openAiOutputText(openAiGeneratedClassResponse("""
+                package com.example.noargs;
+
+                public class StatusService_AIGenerated extends StatusService {
+                    protected StatusService_AIGenerated(com.example.noargs.Helper helper) {
+                        super(helper);
+                    }
+
+                    @Override
+                    public java.lang.String status() {
+                        return this.helper.status();
+                    }
+                }
+                """));
+        })) {
+            result = ProcessorCompilation.compile(
+                tempDir.resolve("noargs-project"),
+                new AimpProcessor(),
+                List.of(
+                    SourceFile.of("com/example/noargs/Helper.java", """
+                        package com.example.noargs;
+
+                        public interface Helper {
+                            String status();
+                        }
+                        """),
+                    SourceFile.of("com/example/noargs/StatusService.java", """
+                        package com.example.noargs;
+
+                        import com.aimp.annotations.AIImplemented;
+
+                        public abstract class StatusService {
+                            protected final Helper helper;
+
+                            protected StatusService(Helper helper) {
+                                this.helper = helper;
+                            }
+
+                            @AIImplemented("Return the helper status")
+                            public abstract String status();
+                        }
+                        """)
+                ),
+                Map.of(),
+                server.processorOptions()
+            );
+        }
+
+        assertTrue(result.success(), () -> String.join("\n", result.messages(javax.tools.Diagnostic.Kind.ERROR)));
     }
 
     @Test
@@ -463,7 +556,7 @@ class AimpProcessorCompileTest {
         CompilationResult result;
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
             JsonNode inputJson = requestInputJson(request);
-            assertTrue(textArray(inputJson.path("responseContract").path("responseTypeValues"))
+            assertFalse(textArray(inputJson.path("responseContract").path("responseTypeValues"))
                 .contains(GeneratedClassSynthesisProtocol.RESPONSE_TYPE_INSUFFICIENT_CONTEXT));
             assertSameElements(
                 List.of("com.example.payment.PaymentRequest", "com.example.payment.PaymentResult"),
@@ -508,7 +601,9 @@ class AimpProcessorCompileTest {
         assertFalse(result.success());
         assertTrue(
             result.messages(javax.tools.Diagnostic.Kind.ERROR).stream()
-                .anyMatch(message -> message.contains("requested more contract context for com.example.payment.PaymentService"))
+                .anyMatch(message -> message.contains(
+                    "returned insufficient_context for com.example.payment.PaymentService before the final synthesis round 3"
+                ))
         );
         assertTrue(
             result.messages(javax.tools.Diagnostic.Kind.ERROR).stream()

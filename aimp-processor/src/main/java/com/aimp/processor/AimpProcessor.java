@@ -372,66 +372,65 @@ public final class AimpProcessor extends AbstractProcessor {
         String contractQualifiedName = contractType.getQualifiedName().toString();
 
         LinkedHashMap<String, ReferencedTypeModel> referencedTypes = new LinkedHashMap<>();
-        LinkedHashSet<TypeElement> currentLayer = collectDirectReferencedTypes(contractType, methods, contractPackage);
-        LinkedHashSet<String> queuedTypeNames = currentLayer.stream()
-            .map(type -> type.getQualifiedName().toString())
-            .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        LinkedHashMap<String, SourceAvailableType> methodSignatureTypes = collectSourceAvailableTypes(
+            collectMethodSignatureReferencedTypes(contractType, methods),
+            contractQualifiedName
+        );
+        LinkedHashMap<String, SourceAvailableType> deferredContractContextTypes = collectSourceAvailableTypes(
+            collectDirectReferencedTypes(contractType, contractPackage),
+            contractQualifiedName
+        );
+        methodSignatureTypes.keySet().forEach(deferredContractContextTypes::remove);
 
-        for (int layer = 1; layer <= MAX_REFERENCED_TYPE_CONTEXT_DEPTH && !currentLayer.isEmpty(); layer++) {
-            LinkedHashSet<TypeElement> nextLayer = new LinkedHashSet<>();
-            for (TypeElement typeElement : currentLayer) {
-                String qualifiedName = typeElement.getQualifiedName().toString();
-                if (qualifiedName.equals(contractQualifiedName) || referencedTypes.containsKey(qualifiedName)) {
-                    continue;
-                }
+        LinkedHashMap<String, SourceAvailableType> initialLayerTypes = methodSignatureTypes.isEmpty()
+            ? deferredContractContextTypes
+            : methodSignatureTypes;
+        boolean deferContractAccessibleTypes = !methodSignatureTypes.isEmpty();
 
-                String sourceSnippet = extractTypeSourceSnippet(typeElement);
-                if (sourceSnippet.isBlank()) {
-                    continue;
-                }
+        LinkedHashMap<String, SourceAvailableType> secondLayerTypes = new LinkedHashMap<>();
+        for (SourceAvailableType initialType : initialLayerTypes.values()) {
+            LinkedHashMap<String, SourceAvailableType> nextLayerTypesForInitial = new LinkedHashMap<>();
+            LinkedHashSet<String> excludedTypeNames = new LinkedHashSet<>(initialLayerTypes.keySet());
+            excludedTypeNames.add(contractQualifiedName);
 
-                List<String> nextLayerTypeNames = layer < MAX_REFERENCED_TYPE_CONTEXT_DEPTH
-                    ? collectDirectReferencedTypes(typeElement, contractPackage).stream()
-                        .map(TypeElement::getQualifiedName)
-                        .map(Object::toString)
-                        .filter(typeName -> !typeName.equals(contractQualifiedName))
-                        .filter(typeName -> !typeName.equals(qualifiedName))
-                        .toList()
-                    : List.of();
-
-                referencedTypes.put(
-                    qualifiedName,
-                    new ReferencedTypeModel(qualifiedName, sourceSnippet, layer, nextLayerTypeNames)
-                );
-
-                if (layer >= MAX_REFERENCED_TYPE_CONTEXT_DEPTH) {
-                    continue;
-                }
-                for (String nextTypeName : nextLayerTypeNames) {
-                    if (queuedTypeNames.contains(nextTypeName)) {
-                        continue;
-                    }
-                    TypeElement nextType = processingEnv.getElementUtils().getTypeElement(nextTypeName);
-                    if (nextType == null) {
-                        continue;
-                    }
-                    if (extractTypeSourceSnippet(nextType).isBlank()) {
-                        continue;
-                    }
-                    queuedTypeNames.add(nextTypeName);
-                    nextLayer.add(nextType);
-                }
+            if (deferContractAccessibleTypes) {
+                addNextLayerTypes(nextLayerTypesForInitial, deferredContractContextTypes, excludedTypeNames);
             }
-            currentLayer = nextLayer;
+
+            addNextLayerTypes(
+                nextLayerTypesForInitial,
+                collectSourceAvailableTypes(
+                    collectDirectReferencedTypes(initialType.typeElement(), contractPackage),
+                    contractQualifiedName
+                ),
+                excludedTypeNames
+            );
+
+            referencedTypes.put(
+                initialType.qualifiedName(),
+                new ReferencedTypeModel(
+                    initialType.qualifiedName(),
+                    initialType.sourceSnippet(),
+                    1,
+                    List.copyOf(nextLayerTypesForInitial.keySet())
+                )
+            );
+            nextLayerTypesForInitial.forEach(secondLayerTypes::putIfAbsent);
+        }
+
+        for (SourceAvailableType secondLayerType : secondLayerTypes.values()) {
+            referencedTypes.putIfAbsent(
+                secondLayerType.qualifiedName(),
+                new ReferencedTypeModel(secondLayerType.qualifiedName(), secondLayerType.sourceSnippet(), 2, List.of())
+            );
         }
 
         return List.copyOf(referencedTypes.values());
     }
 
-    private LinkedHashSet<TypeElement> collectDirectReferencedTypes(
+    private LinkedHashSet<TypeElement> collectMethodSignatureReferencedTypes(
         TypeElement contractType,
-        List<ExecutableElement> methods,
-        String contractPackage
+        List<ExecutableElement> methods
     ) {
         DirectTypeCollector collector = new DirectTypeCollector(contractType.getQualifiedName().toString());
         for (ExecutableElement method : methods) {
@@ -440,7 +439,6 @@ public final class AimpProcessor extends AbstractProcessor {
                 collector.visit(parameter.asType(), null);
             }
         }
-        collectAccessibleMemberTypes(contractType, contractPackage, collector);
         return collector.collectedTypes();
     }
 
@@ -448,6 +446,40 @@ public final class AimpProcessor extends AbstractProcessor {
         DirectTypeCollector collector = new DirectTypeCollector(rootType.getQualifiedName().toString());
         collectAccessibleMemberTypes(rootType, contractPackage, collector);
         return collector.collectedTypes();
+    }
+
+    private LinkedHashMap<String, SourceAvailableType> collectSourceAvailableTypes(
+        Iterable<TypeElement> types,
+        String contractQualifiedName
+    ) {
+        LinkedHashMap<String, SourceAvailableType> collected = new LinkedHashMap<>();
+        for (TypeElement type : types) {
+            String qualifiedName = type.getQualifiedName().toString();
+            if (qualifiedName.equals(contractQualifiedName) || collected.containsKey(qualifiedName)) {
+                continue;
+            }
+
+            String sourceSnippet = extractTypeSourceSnippet(type);
+            if (sourceSnippet.isBlank()) {
+                continue;
+            }
+
+            collected.put(qualifiedName, new SourceAvailableType(type, qualifiedName, sourceSnippet));
+        }
+        return collected;
+    }
+
+    private void addNextLayerTypes(
+        LinkedHashMap<String, SourceAvailableType> target,
+        LinkedHashMap<String, SourceAvailableType> candidates,
+        Set<String> excludedTypeNames
+    ) {
+        for (Map.Entry<String, SourceAvailableType> entry : candidates.entrySet()) {
+            if (excludedTypeNames.contains(entry.getKey())) {
+                continue;
+            }
+            target.putIfAbsent(entry.getKey(), entry.getValue());
+        }
     }
 
     private void collectAccessibleMemberTypes(TypeElement rootType, String contractPackage, DirectTypeCollector collector) {
@@ -608,6 +640,9 @@ public final class AimpProcessor extends AbstractProcessor {
             }
             return null;
         }
+    }
+
+    private record SourceAvailableType(TypeElement typeElement, String qualifiedName, String sourceSnippet) {
     }
 
     private static final class AnnotationFreeTypeRenderer extends SimpleTypeVisitor14<String, Void> {
@@ -809,7 +844,35 @@ public final class AimpProcessor extends AbstractProcessor {
     }
 
     private String extractContractSourceSnippet(TypeElement contractType) {
-        return extractTypeSourceSnippet(contractType);
+        if (trees == null) {
+            return "";
+        }
+
+        TreePath path = trees.getPath(contractType);
+        if (path == null) {
+            return "";
+        }
+
+        CompilationUnitTree compilationUnit = path.getCompilationUnit();
+        if (compilationUnit == null || compilationUnit.getSourceFile() == null) {
+            return "";
+        }
+
+        String typeSnippet = extractTypeSourceSnippet(contractType);
+        if (typeSnippet.isBlank()) {
+            return "";
+        }
+
+        StringBuilder builder = new StringBuilder(typeSnippet.length() + 256);
+        if (compilationUnit.getPackageName() != null) {
+            builder.append("package ").append(compilationUnit.getPackageName()).append(";\n\n");
+        }
+        compilationUnit.getImports().forEach(importTree -> builder.append(importTree.toString().trim()).append('\n'));
+        if (!compilationUnit.getImports().isEmpty()) {
+            builder.append('\n');
+        }
+        builder.append(typeSnippet);
+        return builder.toString().trim();
     }
 
     private String extractTypeSourceSnippet(TypeElement typeElement) {

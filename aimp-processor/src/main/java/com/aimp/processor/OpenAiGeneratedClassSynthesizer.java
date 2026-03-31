@@ -77,12 +77,24 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
                     );
                     continue;
                 }
-                case GeneratedClassSynthesisProtocol.RESPONSE_TYPE_INSUFFICIENT_CONTEXT -> throw new MethodBodySynthesisException(
-                    "OpenAI requested more contract context for "
-                        + contract.qualifiedName()
-                        + ". "
-                        + synthesisResponse.callerMessage()
-                );
+                case GeneratedClassSynthesisProtocol.RESPONSE_TYPE_INSUFFICIENT_CONTEXT -> {
+                    if (roundNumber < MAX_SYNTHESIS_ROUNDS) {
+                        throw new MethodBodySynthesisException(
+                            "OpenAI returned insufficient_context for "
+                                + contract.qualifiedName()
+                                + " before the final synthesis round "
+                                + MAX_SYNTHESIS_ROUNDS
+                                + ". "
+                                + synthesisResponse.callerMessage()
+                        );
+                    }
+                    throw new MethodBodySynthesisException(
+                        "OpenAI requested more contract context for "
+                            + contract.qualifiedName()
+                            + ". "
+                            + synthesisResponse.callerMessage()
+                    );
+                }
                 case GeneratedClassSynthesisProtocol.RESPONSE_TYPE_GENERATED_CLASS ->
                     { return GeneratedClassSourceSanitizer.sanitize(synthesisResponse.generatedClassSource(), contract); }
                 default -> throw new MethodBodySynthesisException(

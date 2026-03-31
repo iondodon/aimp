@@ -37,6 +37,8 @@ public abstract class GreetingController {
      * @return resolved greeting response
      */
     @PostMapping
-    @AIImplemented("Call the service")
+    @AIImplemented("""
+       Call the service
+        """)
     public abstract GreetingResponse greet(@Valid @RequestBody GreetingRequest request);
 }

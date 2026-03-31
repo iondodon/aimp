@@ -2,8 +2,11 @@ package com.aimp.processor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.aimp.model.ConstructorModel;
 import com.aimp.model.ContractKind;
 import com.aimp.model.ContractModel;
+import com.aimp.model.MethodModel;
+import com.aimp.model.ParameterModel;
 import com.aimp.model.Visibility;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -106,6 +109,70 @@ class GeneratedClassSourceSanitizerTest {
                 @Override
                 public java.lang.String charge() {
                     return "ok";
+                }
+            }
+            """.trim(), sanitized.trim());
+    }
+
+    @Test
+    void addsMissingImportsFromContractSignatures() {
+        ContractModel contract = new ContractModel(
+            "com.example.greeting.api",
+            "GreetingController",
+            "com.example.greeting.api.GreetingController",
+            ContractKind.ABSTRACT_CLASS,
+            Visibility.PUBLIC,
+            "",
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(new ConstructorModel(
+                Visibility.PUBLIC,
+                List.of(new ParameterModel("greetingService", "com.example.greeting.service.GreetingService", false, List.of())),
+                List.of()
+            )),
+            List.of(new MethodModel(
+                "greet",
+                "com.example.greeting.service.GreetingResponse",
+                Visibility.PUBLIC,
+                List.of(),
+                List.of(new ParameterModel("request", "com.example.greeting.service.GreetingRequest", false, List.of())),
+                List.of(),
+                List.of(),
+                "Call the service"
+            ))
+        );
+
+        String sanitized = GeneratedClassSourceSanitizer.sanitize("""
+            package com.example.greeting.api;
+
+            public class GreetingController_AIGenerated extends GreetingController {
+                public GreetingController_AIGenerated(GreetingService greetingService) {
+                    super(greetingService);
+                }
+
+                @Override
+                public GreetingResponse greet(GreetingRequest request) {
+                    return this.greetingService.greet(request);
+                }
+            }
+            """, contract);
+
+        assertEquals("""
+            package com.example.greeting.api;
+
+            import com.example.greeting.service.GreetingRequest;
+            import com.example.greeting.service.GreetingResponse;
+            import com.example.greeting.service.GreetingService;
+
+            public class GreetingController_AIGenerated extends GreetingController {
+                public GreetingController_AIGenerated(GreetingService greetingService) {
+                    super(greetingService);
+                }
+
+                @Override
+                public GreetingResponse greet(GreetingRequest request) {
+                    return this.greetingService.greet(request);
                 }
             }
             """.trim(), sanitized.trim());

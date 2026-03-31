@@ -33,6 +33,10 @@ class GeneratedClassSynthesisPromptFactoryTest {
             ContractKind.INTERFACE,
             Visibility.PUBLIC,
             """
+            package com.example.payment;
+
+            import com.aimp.annotations.AIImplemented;
+
             public interface PaymentService {
                 @AIImplemented("Charge a payment")
                 PaymentResult charge(PaymentRequest request);
@@ -82,19 +86,65 @@ class GeneratedClassSynthesisPromptFactoryTest {
         assertEquals("PaymentService_AIGenerated", root.path("generationTarget").path("generatedSimpleName").asText());
         assertEquals("implement", root.path("generationTarget").path("relationship").asText());
         assertEquals(
-            List.of("generated_class", "request_context_types", "insufficient_context"),
+            List.of("generated_class", "request_context_types"),
             textArray(root.path("responseContract").path("responseTypeValues"))
         );
+        assertTrue(root.path("responseContract").path("callerMessageRule").isMissingNode());
         assertTrue(textArray(root.path("constraints")).contains(
             "Do not duplicate annotations or mix declaration annotations with equivalent type-use annotations on the same element."
         ));
+        assertTrue(textArray(root.path("constraints")).contains(
+            "Do not use reflection, method-name scanning, Method.invoke, or other dynamic invocation unless the contract explicitly requires it."
+        ));
+        assertTrue(textArray(root.path("constraints")).contains(
+            "If implementation depends on a collaborator API that is not present in contractSource or includedTypeContexts, request more context instead of guessing or using dynamic invocation."
+        ));
+        assertTrue(textArray(root.path("constraints")).contains(
+            "Do not return responseType insufficient_context before the final round. In non-final rounds, return generated_class or request_context_types."
+        ));
         assertEquals(List.of("com.example.payment.PaymentResult"), textArray(root.path("availableNextLayerTypeNames")));
+        assertTrue(root.path("contractSource").asText().contains("package com.example.payment;"));
+        assertTrue(root.path("contractSource").asText().contains("import com.aimp.annotations.AIImplemented;"));
         assertTrue(root.path("contractSource").asText().contains("@AIImplemented(\"Charge a payment\")"));
         assertTrue(root.path("contractSource").asText().contains("PaymentResult charge(PaymentRequest request);"));
         assertEquals("com.example.payment.PaymentRequest", root.path("includedTypeContexts").get(0).path("qualifiedName").asText());
         assertTrue(root.path("includedTypeContexts").get(0).path("source").asText().contains("public record PaymentRequest(String reference) {"));
-        assertEquals("charge", root.path("annotatedMethods").get(0).path("name").asText());
-        assertEquals("Charge a payment", root.path("annotatedMethods").get(0).path("description").asText());
+        assertTrue(root.path("annotatedMethods").isMissingNode());
+        assertTrue(root.path("accessibleConstructors").isMissingNode());
+    }
+
+    @Test
+    void finalRoundAllowsInsufficientContext() {
+        ContractModel contract = new ContractModel(
+            "com.example.payment",
+            "PaymentService",
+            "com.example.payment.PaymentService",
+            ContractKind.INTERFACE,
+            Visibility.PUBLIC,
+            "package com.example.payment;\n\npublic interface PaymentService {}",
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of()
+        );
+
+        JsonNode root = JsonSupport.readTree(
+            GeneratedClassSynthesisPromptFactory.prompt(contract, List.of(), List.of(), 3, 3),
+            "generated class synthesis prompt"
+        );
+
+        assertEquals(
+            List.of("generated_class", "request_context_types", "insufficient_context"),
+            textArray(root.path("responseContract").path("responseTypeValues"))
+        );
+        assertEquals(
+            "Use when responseType is insufficient_context. Ask the caller for missing business rules, examples, or handwritten code.",
+            root.path("responseContract").path("callerMessageRule").asText()
+        );
+        assertTrue(textArray(root.path("constraints")).contains(
+            "Use responseType insufficient_context only in this final round when the current context still cannot support a safe implementation."
+        ));
     }
 
     private static List<String> textArray(JsonNode node) {
