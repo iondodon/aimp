@@ -352,6 +352,7 @@ class AimpProcessorCompileTest {
                 assertSameElements(List.of("com.example.graph.B"), textValues(inputJson.path("includedTypeContexts").findValues("qualifiedName")));
                 assertTrue(inputJson.path("includedTypeContexts").get(0).path("source").asText().contains("package com.example.graph;"));
                 assertTrue(inputJson.path("includedTypeContexts").get(0).path("source").asText().contains("final class BSupport"));
+                assertTrue(inputJson.path("includedTypeContexts").get(0).path("nextLayerTypeNames").isMissingNode());
                 assertEquals(List.of("com.example.graph.B"), textArray(inputJson.path("contextRequestFeedback").path("fulfilledTypeNames")));
                 return openAiOutputText(openAiRequestContextTypesResponse(List.of("com.example.graph.C")));
             }

@@ -118,7 +118,6 @@ final class GeneratedClassSynthesisPromptFactory {
         json.put("qualifiedName", referencedType.qualifiedName());
         json.put("layer", referencedType.layer());
         json.put("source", referencedType.sourceSnippet());
-        addAll(json.putArray("nextLayerTypeNames"), referencedType.nextLayerTypeNames());
         return json;
     }
 

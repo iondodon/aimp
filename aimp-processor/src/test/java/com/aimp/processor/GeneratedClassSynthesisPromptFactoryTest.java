@@ -117,6 +117,7 @@ class GeneratedClassSynthesisPromptFactoryTest {
         assertTrue(root.path("contractSource").asText().contains("PaymentResult charge(PaymentRequest request);"));
         assertEquals("com.example.payment.PaymentRequest", root.path("includedTypeContexts").get(0).path("qualifiedName").asText());
         assertTrue(root.path("includedTypeContexts").get(0).path("source").asText().contains("public record PaymentRequest(String reference) {"));
+        assertTrue(root.path("includedTypeContexts").get(0).path("nextLayerTypeNames").isMissingNode());
         assertEquals(
             List.of("com.example.payment.PaymentRequest"),
             textArray(root.path("contextRequestFeedback").path("fulfilledTypeNames"))
