@@ -20,16 +20,23 @@ import java.util.stream.Collectors;
 
 final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer {
     private static final String DEFAULT_REASONING_EFFORT = "low";
-    private static final int MAX_SYNTHESIS_ROUNDS = 3;
 
     private final HttpClient httpClient;
     private final URI endpoint;
     private final String model;
     private final Duration timeout;
     private final String apiKey;
+    private final int maxSynthesisRounds;
     private final Consumer<String> logger;
 
-    OpenAiGeneratedClassSynthesizer(URI endpoint, String model, Duration timeout, String apiKey, Consumer<String> logger) {
+    OpenAiGeneratedClassSynthesizer(
+        URI endpoint,
+        String model,
+        Duration timeout,
+        String apiKey,
+        int maxSynthesisRounds,
+        Consumer<String> logger
+    ) {
         this.httpClient = HttpClient.newBuilder()
             .connectTimeout(timeout)
             .build();
@@ -37,6 +44,7 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
         this.model = model;
         this.timeout = timeout;
         this.apiKey = apiKey;
+        this.maxSynthesisRounds = maxSynthesisRounds;
         this.logger = logger;
     }
 
@@ -48,16 +56,17 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
         Map<String, ReferencedTypeModel> contextTypesByName = contract.referencedTypes().stream()
             .collect(Collectors.toMap(ReferencedTypeModel::qualifiedName, type -> type, (left, right) -> left, LinkedHashMap::new));
         LinkedHashSet<String> includedTypeNames = new LinkedHashSet<>();
-        LinkedHashSet<String> availableNextLayerTypeNames = contract.referencedTypes().stream()
+        LinkedHashSet<String> requestableTypeNames = contract.referencedTypes().stream()
             .filter(type -> type.layer() == 1)
             .map(ReferencedTypeModel::qualifiedName)
             .collect(Collectors.toCollection(LinkedHashSet::new));
+        ContextRequestFeedback contextRequestFeedback = null;
 
-        for (int roundNumber = 1; roundNumber <= MAX_SYNTHESIS_ROUNDS; roundNumber++) {
+        for (int roundNumber = 1; roundNumber <= maxSynthesisRounds; roundNumber++) {
             String outputText = invokeOpenAi(
                 contract,
                 includedTypes(includedTypeNames, contextTypesByName),
-                List.copyOf(availableNextLayerTypeNames),
+                contextRequestFeedback,
                 roundNumber,
                 logTarget
             );
@@ -66,24 +75,24 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
                 GeneratedClassSynthesisProtocol.parseResponse(outputText);
             switch (synthesisResponse.responseType()) {
                 case GeneratedClassSynthesisProtocol.RESPONSE_TYPE_REQUEST_CONTEXT_TYPES -> {
-                    handleRequestedContextTypes(
+                    contextRequestFeedback = handleRequestedContextTypes(
                         contract,
                         logTarget,
                         roundNumber,
                         synthesisResponse.requestedTypeNames(),
                         contextTypesByName,
                         includedTypeNames,
-                        availableNextLayerTypeNames
+                        requestableTypeNames
                     );
                     continue;
                 }
                 case GeneratedClassSynthesisProtocol.RESPONSE_TYPE_INSUFFICIENT_CONTEXT -> {
-                    if (roundNumber < MAX_SYNTHESIS_ROUNDS) {
+                    if (roundNumber < maxSynthesisRounds) {
                         throw new MethodBodySynthesisException(
                             "OpenAI returned insufficient_context for "
                                 + contract.qualifiedName()
                                 + " before the final synthesis round "
-                                + MAX_SYNTHESIS_ROUNDS
+                                + maxSynthesisRounds
                                 + ". "
                                 + synthesisResponse.callerMessage()
                         );
@@ -107,7 +116,7 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
             "OpenAI requested more source-type context for "
                 + contractQualifiedName
                 + " after exhausting the maximum of "
-                + MAX_SYNTHESIS_ROUNDS
+                + maxSynthesisRounds
                 + " synthesis rounds. Add more context to @AIImplemented(\"...\") or the contract code."
         );
     }
@@ -126,52 +135,36 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
             .toList();
     }
 
-    private void handleRequestedContextTypes(
+    private ContextRequestFeedback handleRequestedContextTypes(
         ContractModel contract,
         String logTarget,
         int roundNumber,
         List<String> requestedTypeNames,
         Map<String, ReferencedTypeModel> contextTypesByName,
         LinkedHashSet<String> includedTypeNames,
-        LinkedHashSet<String> availableNextLayerTypeNames
+        LinkedHashSet<String> requestableTypeNames
     ) {
         if (requestedTypeNames.isEmpty()) {
             throw new MethodBodySynthesisException(
                 "OpenAI requested more source-type context for "
                     + contract.qualifiedName()
-                    + " but did not name any types. Request fully qualified names from the available next-layer list."
+                    + " but did not name any types. Request concrete fully qualified Java type names."
             );
         }
-        if (roundNumber >= MAX_SYNTHESIS_ROUNDS) {
+        if (roundNumber >= maxSynthesisRounds) {
             throw new MethodBodySynthesisException(
                 "OpenAI requested more source-type context for "
                     + contract.qualifiedName()
                     + " after reaching the maximum of "
-                    + MAX_SYNTHESIS_ROUNDS
+                    + maxSynthesisRounds
                     + " synthesis rounds. Add more context to @AIImplemented(\"...\") or the contract code."
             );
         }
 
-        for (String requestedTypeName : requestedTypeNames) {
-            if (!availableNextLayerTypeNames.contains(requestedTypeName)) {
-                throw new MethodBodySynthesisException(
-                    "OpenAI requested source type "
-                        + requestedTypeName
-                        + " for "
-                        + contract.qualifiedName()
-                        + ", but that type is not available in the next context layer."
-                );
-            }
-            if (!contextTypesByName.containsKey(requestedTypeName)) {
-                throw new MethodBodySynthesisException(
-                    "OpenAI requested source type "
-                        + requestedTypeName
-                        + " for "
-                        + contract.qualifiedName()
-                        + ", but AIMP could not resolve source for that type."
-                );
-            }
-        }
+        LinkedHashSet<String> deduplicatedRequests = new LinkedHashSet<>(requestedTypeNames);
+        LinkedHashSet<String> currentRoundRequestableTypes = new LinkedHashSet<>(requestableTypeNames);
+        List<String> fulfilledTypeNames = new java.util.ArrayList<>();
+        List<RejectedContextTypeRequest> rejectedTypeRequests = new java.util.ArrayList<>();
 
         logger.accept(
             "AIMP OpenAI requested additional context for "
@@ -179,25 +172,59 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
                 + " in round "
                 + roundNumber
                 + ": "
-                + String.join(", ", requestedTypeNames)
+                + String.join(", ", deduplicatedRequests)
         );
 
-        requestedTypeNames.forEach(typeName -> {
-            includedTypeNames.add(typeName);
-            availableNextLayerTypeNames.remove(typeName);
-        });
-
-        for (String requestedTypeName : requestedTypeNames) {
-            ReferencedTypeModel referencedType = contextTypesByName.get(requestedTypeName);
-            if (referencedType == null) {
+        for (String requestedTypeName : deduplicatedRequests) {
+            if (includedTypeNames.contains(requestedTypeName)) {
+                rejectedTypeRequests.add(new RejectedContextTypeRequest(
+                    requestedTypeName,
+                    "AIMP already included this type in an earlier round."
+                ));
                 continue;
             }
+            ReferencedTypeModel referencedType = contextTypesByName.get(requestedTypeName);
+            if (referencedType == null) {
+                rejectedTypeRequests.add(new RejectedContextTypeRequest(
+                    requestedTypeName,
+                    "AIMP could not supply this type because its source is unavailable or it is not reachable from the contract context graph."
+                ));
+                continue;
+            }
+            if (!currentRoundRequestableTypes.contains(requestedTypeName)) {
+                rejectedTypeRequests.add(new RejectedContextTypeRequest(
+                    requestedTypeName,
+                    "AIMP could not supply this type in the current context step because it is not yet reachable from contractSource or the currently included type contexts."
+                ));
+                continue;
+            }
+
+            fulfilledTypeNames.add(requestedTypeName);
+            includedTypeNames.add(requestedTypeName);
+            requestableTypeNames.remove(requestedTypeName);
+            currentRoundRequestableTypes.remove(requestedTypeName);
             referencedType.nextLayerTypeNames().stream()
                 .filter(typeName -> !includedTypeNames.contains(typeName))
-                .forEach(availableNextLayerTypeNames::add);
+                .forEach(typeName -> {
+                    currentRoundRequestableTypes.add(typeName);
+                    requestableTypeNames.add(typeName);
+                });
         }
 
-        if (availableNextLayerTypeNames.isEmpty() && roundNumber + 1 <= MAX_SYNTHESIS_ROUNDS) {
+        if (!rejectedTypeRequests.isEmpty()) {
+            logger.accept(
+                "AIMP could not provide some requested context for "
+                    + logTarget
+                    + " in round "
+                    + roundNumber
+                    + ": "
+                    + rejectedTypeRequests.stream()
+                        .map(rejected -> rejected.qualifiedName() + " (" + rejected.reason() + ")")
+                        .collect(Collectors.joining(", "))
+            );
+        }
+
+        if (requestableTypeNames.isEmpty() && roundNumber + 1 <= maxSynthesisRounds) {
             logger.accept(
                 "AIMP exhausted additional source-type context layers for "
                     + logTarget
@@ -205,12 +232,14 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
                     + roundNumber
             );
         }
+
+        return new ContextRequestFeedback(fulfilledTypeNames, rejectedTypeRequests);
     }
 
     private String invokeOpenAi(
         ContractModel contract,
         List<ReferencedTypeModel> includedReferencedTypes,
-        List<String> availableNextLayerTypeNames,
+        ContextRequestFeedback contextRequestFeedback,
         int roundNumber,
         String logTarget
     ) {
@@ -223,7 +252,7 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
                 + " in round "
                 + roundNumber
                 + " of "
-                + MAX_SYNTHESIS_ROUNDS
+                + maxSynthesisRounds
         );
 
         HttpRequest request = HttpRequest.newBuilder(endpoint)
@@ -231,7 +260,7 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
             .header("Content-Type", "application/json")
             .header("Authorization", "Bearer " + apiKey)
             .POST(HttpRequest.BodyPublishers.ofString(
-                requestBody(contract, includedReferencedTypes, availableNextLayerTypeNames, roundNumber)
+                requestBody(contract, includedReferencedTypes, contextRequestFeedback, roundNumber)
             ))
             .build();
 
@@ -270,7 +299,7 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
     private String requestBody(
         ContractModel contract,
         List<ReferencedTypeModel> includedReferencedTypes,
-        List<String> availableNextLayerTypeNames,
+        ContextRequestFeedback contextRequestFeedback,
         int roundNumber
     ) {
         ObjectNode request = JsonSupport.objectNode();
@@ -282,9 +311,9 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
             GeneratedClassSynthesisPromptFactory.prompt(
                 contract,
                 includedReferencedTypes,
-                availableNextLayerTypeNames,
+                contextRequestFeedback,
                 roundNumber,
-                MAX_SYNTHESIS_ROUNDS
+                maxSynthesisRounds
             )
         );
         return JsonSupport.writeJson(request, "OpenAI request body");

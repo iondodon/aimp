@@ -33,7 +33,7 @@ final class GeneratedClassSynthesisProtocol {
         responseContract.put("generatedClassSource", "Required when responseType is generated_class.");
         responseContract.put(
             "requestedTypeNames",
-            "Required when responseType is request_context_types. Use only fully qualified names from availableNextLayerTypeNames."
+            "Required when responseType is request_context_types. Use only concrete fully qualified Java type names."
         );
         responseContract.put("callerMessage", "Required when responseType is insufficient_context.");
         return JsonSupport.writeJson(root, "synthesis instructions");

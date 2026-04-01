@@ -10,7 +10,7 @@ import java.util.List;
  * @param qualifiedName the contract fully qualified name
  * @param kind the contract kind
  * @param visibility the contract visibility
- * @param sourceSnippet the contract source snippet when available
+ * @param sourceSnippet the full source file content for the contract compilation unit when available
  * @param referencedTypes referenced types that may be supplied as extra context
  * @param typeParameters the contract type parameters
  * @param annotations annotations declared on the contract type
@@ -38,7 +38,7 @@ public record ContractModel(
      * @param qualifiedName the contract fully qualified name
      * @param kind the contract kind
      * @param visibility the contract visibility
-     * @param sourceSnippet the contract source snippet when available
+     * @param sourceSnippet the full source file content for the contract compilation unit when available
      * @param referencedTypes referenced types that may be supplied as extra context
      * @param typeParameters the contract type parameters
      * @param annotations annotations declared on the contract type

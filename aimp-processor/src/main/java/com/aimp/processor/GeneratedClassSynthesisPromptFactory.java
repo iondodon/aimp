@@ -21,7 +21,7 @@ final class GeneratedClassSynthesisPromptFactory {
     static String prompt(
         ContractModel contract,
         List<ReferencedTypeModel> includedReferencedTypes,
-        List<String> availableNextLayerTypeNames,
+        ContextRequestFeedback contextRequestFeedback,
         int roundNumber,
         int maxRounds
     ) {
@@ -59,7 +59,7 @@ final class GeneratedClassSynthesisPromptFactory {
         );
         responseContract.put(
             "requestedTypeNamesRule",
-            "Use when responseType is request_context_types. Only request fully qualified names from availableNextLayerTypeNames."
+            "Use when responseType is request_context_types. Request only concrete fully qualified Java type names whose source context would materially help."
         );
         if (finalRound) {
             responseContract.put(
@@ -86,10 +86,11 @@ final class GeneratedClassSynthesisPromptFactory {
                 "Do not duplicate annotations or mix declaration annotations with equivalent type-use annotations on the same element.",
                 "Do not rely on private members of referenced types.",
                 "If implementation depends on a collaborator API that is not present in contractSource or includedTypeContexts, request more context instead of guessing or using dynamic invocation.",
+                "When requesting more context, request only fully qualified Java type names. Do not request methods, fields, packages, wildcards, or prose descriptions.",
+                "Prefer requesting types directly referenced from contractSource or from the source code already present in includedTypeContexts.",
                 finalRound
                     ? "Use responseType insufficient_context only in this final round when the current context still cannot support a safe implementation."
                     : "Do not return responseType insufficient_context before the final round. In non-final rounds, return generated_class or request_context_types.",
-                "If availableNextLayerTypeNames is not empty and you need more source context, use responseType request_context_types before giving up.",
                 "Use responseType insufficient_context only when additional type layers will not solve the missing context."
             )
         );
@@ -99,8 +100,16 @@ final class GeneratedClassSynthesisPromptFactory {
         ArrayNode includedTypeContexts = root.putArray("includedTypeContexts");
         includedReferencedTypes.forEach(referencedType -> includedTypeContexts.add(referencedTypeNode(referencedType)));
 
-        ArrayNode availableNextLayerTypes = root.putArray("availableNextLayerTypeNames");
-        addAll(availableNextLayerTypes, availableNextLayerTypeNames);
+        if (contextRequestFeedback != null && !contextRequestFeedback.isEmpty()) {
+            ObjectNode feedback = root.putObject("contextRequestFeedback");
+            addAll(feedback.putArray("fulfilledTypeNames"), contextRequestFeedback.fulfilledTypeNames());
+            ArrayNode rejectedTypeRequests = feedback.putArray("rejectedTypeRequests");
+            contextRequestFeedback.rejectedTypeRequests().forEach(rejectedRequest -> {
+                ObjectNode rejected = rejectedTypeRequests.addObject();
+                rejected.put("qualifiedName", rejectedRequest.qualifiedName());
+                rejected.put("reason", rejectedRequest.reason());
+            });
+        }
 
         return JsonSupport.writeJson(root, "generated class synthesis prompt");
     }

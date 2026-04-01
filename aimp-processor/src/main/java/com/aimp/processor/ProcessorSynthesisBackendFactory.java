@@ -11,10 +11,12 @@ final class ProcessorSynthesisBackendFactory {
     static final String OPTION_SYNTHESIS_TIMEOUT_MILLIS = "aimp.synthesis.timeoutMillis";
     static final String OPTION_SYNTHESIS_API_KEY = "aimp.synthesis.apiKey";
     static final String OPTION_OPENAI_BASE_URL = "aimp.synthesis.openai.baseUrl";
+    static final String OPTION_SYNTHESIS_MAX_ROUNDS = "aimp.synthesis.maxRounds";
 
     private static final String DEFAULT_OPENAI_BASE_URL = "https://api.openai.com";
     private static final String DEFAULT_OPENAI_MODEL = "gpt-5";
     private static final String DEFAULT_OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
+    private static final int DEFAULT_MAX_SYNTHESIS_ROUNDS = 6;
 
     private final Function<String, String> envLookup;
 
@@ -55,7 +57,35 @@ final class ProcessorSynthesisBackendFactory {
             baseUrl = DEFAULT_OPENAI_BASE_URL;
         }
 
-        return new OpenAiGeneratedClassSynthesizer(OpenAiEndpoints.responsesEndpoint(baseUrl), model, timeout, apiKey, logger);
+        return new OpenAiGeneratedClassSynthesizer(
+            OpenAiEndpoints.responsesEndpoint(baseUrl),
+            model,
+            timeout,
+            apiKey,
+            maxRounds(options),
+            logger
+        );
+    }
+
+    int maxRounds(Map<String, String> options) {
+        String maxRoundsValue = trimToNull(options.get(OPTION_SYNTHESIS_MAX_ROUNDS));
+        if (maxRoundsValue == null) {
+            return DEFAULT_MAX_SYNTHESIS_ROUNDS;
+        }
+        try {
+            int maxRounds = Integer.parseInt(maxRoundsValue);
+            if (maxRounds < 2) {
+                throw new MethodBodySynthesisException(
+                    "Invalid integer value for -" + OPTION_SYNTHESIS_MAX_ROUNDS + ": " + maxRoundsValue + ". Expected >= 2."
+                );
+            }
+            return maxRounds;
+        } catch (NumberFormatException exception) {
+            throw new MethodBodySynthesisException(
+                "Invalid integer value for -" + OPTION_SYNTHESIS_MAX_ROUNDS + ": " + maxRoundsValue,
+                exception
+            );
+        }
     }
 
     private Duration timeout(Map<String, String> options) {

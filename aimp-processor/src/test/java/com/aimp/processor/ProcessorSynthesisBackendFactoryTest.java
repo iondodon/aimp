@@ -35,4 +35,11 @@ class ProcessorSynthesisBackendFactoryTest {
 
         assertTrue(exception.getMessage().contains("OPENAI_API_KEY"));
     }
+
+    @Test
+    void parsesConfiguredMaxRounds() {
+        ProcessorSynthesisBackendFactory factory = new ProcessorSynthesisBackendFactory(name -> "env-openai-key");
+
+        assertEquals(8, factory.maxRounds(Map.of(ProcessorSynthesisBackendFactory.OPTION_SYNTHESIS_MAX_ROUNDS, "8")));
+    }
 }

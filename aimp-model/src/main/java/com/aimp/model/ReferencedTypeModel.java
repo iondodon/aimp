@@ -6,7 +6,7 @@ import java.util.List;
  * Describes extra type context that may be sent to the LLM in later rounds.
  *
  * @param qualifiedName the referenced type's fully qualified name
- * @param sourceSnippet the referenced type source snippet when available
+ * @param sourceSnippet the full source file content for the referenced type when available
  * @param layer the context expansion layer where the type becomes available
  * @param nextLayerTypeNames the reachable type names that may be requested next
  */
@@ -20,7 +20,7 @@ public record ReferencedTypeModel(
      * Creates an immutable referenced type model.
      *
      * @param qualifiedName the referenced type's fully qualified name
-     * @param sourceSnippet the referenced type source snippet when available
+     * @param sourceSnippet the full source file content for the referenced type when available
      * @param layer the context expansion layer where the type becomes available
      * @param nextLayerTypeNames the reachable type names that may be requested next
      */

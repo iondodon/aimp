@@ -45,6 +45,7 @@ class AimpProcessorCompileTest {
             assertTrue(inputJson.path("contractSource").asText().contains("@AIImplemented(\"Charge a payment and return the result\")"));
             assertTrue(inputJson.path("annotatedMethods").isMissingNode());
             assertTrue(inputJson.path("accessibleConstructors").isMissingNode());
+            assertTrue(inputJson.path("availableNextLayerTypeNames").isMissingNode());
             return openAiOutputText(openAiGeneratedClassResponse(PAYMENT_SERVICE_GENERATED_SOURCE));
         })) {
             result = ProcessorCompilation.compile(
@@ -100,10 +101,7 @@ class AimpProcessorCompileTest {
             assertEquals("generate_generated_class", inputJson.path("task").asText());
             assertEquals("PaymentService_AIGenerated", inputJson.path("generationTarget").path("generatedSimpleName").asText());
             assertTrue(inputJson.path("contractSource").asText().contains("public interface PaymentService"));
-            assertSameElements(
-                List.of("com.example.payment.PaymentRequest", "com.example.payment.PaymentResult"),
-                textArray(inputJson.path("availableNextLayerTypeNames"))
-            );
+            assertTrue(inputJson.path("availableNextLayerTypeNames").isMissingNode());
             return openAiOutputText(openAiGeneratedClassResponse("""
                 package com.example.payment;
 
@@ -172,6 +170,7 @@ class AimpProcessorCompileTest {
             assertTrue(inputJson.path("contractSource").asText().contains("String answer(String prompt);"));
             assertTrue(inputJson.path("annotatedMethods").isMissingNode());
             assertTrue(inputJson.path("accessibleConstructors").isMissingNode());
+            assertTrue(inputJson.path("availableNextLayerTypeNames").isMissingNode());
             return openAiOutputText(openAiGeneratedClassResponse("""
                 package com.example.echo;
 
@@ -337,169 +336,137 @@ class AimpProcessorCompileTest {
     }
 
     @Test
-    void promptIncludesTypesFromAccessibleMembersAndSuperclasses() throws Exception {
+    void llmCanRequestDeeperTypesAcrossMultipleRounds() throws Exception {
         CompilationResult result;
         AtomicInteger requestCount = new AtomicInteger();
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
             JsonNode inputJson = requestInputJson(request);
             int round = requestCount.incrementAndGet();
             if (round == 1) {
-                assertSameElements(
-                    List.of(
-                        "com.example.hierarchy.GreetingRequest",
-                        "com.example.hierarchy.GreetingResponse"
-                    ),
-                    textArray(inputJson.path("availableNextLayerTypeNames"))
-                );
-                assertFalse(textArray(inputJson.path("availableNextLayerTypeNames")).contains("com.example.hierarchy.GreetingGateway"));
-                assertFalse(textArray(inputJson.path("availableNextLayerTypeNames")).contains("com.example.hierarchy.AuditTrail"));
-                return openAiOutputText(openAiRequestContextTypesResponse(List.of(
-                    "com.example.hierarchy.GreetingRequest",
-                    "com.example.hierarchy.GreetingResponse"
-                )));
+                assertTrue(inputJson.path("availableNextLayerTypeNames").isMissingNode());
+                assertEquals(0, inputJson.path("includedTypeContexts").size());
+                return openAiOutputText(openAiRequestContextTypesResponse(List.of("com.example.graph.B")));
             }
 
             if (round == 2) {
-                assertSameElements(
-                    List.of(
-                        "com.example.hierarchy.GreetingRequest",
-                        "com.example.hierarchy.GreetingResponse"
-                    ),
-                    textValues(inputJson.path("includedTypeContexts").findValues("qualifiedName"))
-                );
-                assertSameElements(
-                    List.of(
-                        "com.example.hierarchy.GreetingGateway",
-                        "com.example.hierarchy.AuditTrail"
-                    ),
-                    textArray(inputJson.path("availableNextLayerTypeNames"))
-                );
-                return openAiOutputText(openAiRequestContextTypesResponse(List.of(
-                    "com.example.hierarchy.GreetingGateway",
-                    "com.example.hierarchy.AuditTrail"
-                )));
+                assertSameElements(List.of("com.example.graph.B"), textValues(inputJson.path("includedTypeContexts").findValues("qualifiedName")));
+                assertTrue(inputJson.path("includedTypeContexts").get(0).path("source").asText().contains("package com.example.graph;"));
+                assertTrue(inputJson.path("includedTypeContexts").get(0).path("source").asText().contains("final class BSupport"));
+                assertEquals(List.of("com.example.graph.B"), textArray(inputJson.path("contextRequestFeedback").path("fulfilledTypeNames")));
+                return openAiOutputText(openAiRequestContextTypesResponse(List.of("com.example.graph.C")));
             }
 
-            assertEquals(3, round);
+            if (round == 3) {
+                assertSameElements(
+                    List.of("com.example.graph.B", "com.example.graph.C"),
+                    textValues(inputJson.path("includedTypeContexts").findValues("qualifiedName"))
+                );
+                assertEquals(List.of("com.example.graph.C"), textArray(inputJson.path("contextRequestFeedback").path("fulfilledTypeNames")));
+                assertTrue(inputJson.path("includedTypeContexts").get(1).path("source").asText().contains("public final class C"));
+                return openAiOutputText(openAiRequestContextTypesResponse(List.of("com.example.graph.D")));
+            }
+
+            assertEquals(4, round);
             assertSameElements(
-                List.of(
-                    "com.example.hierarchy.GreetingRequest",
-                    "com.example.hierarchy.GreetingResponse",
-                    "com.example.hierarchy.GreetingGateway",
-                    "com.example.hierarchy.AuditTrail"
-                ),
+                List.of("com.example.graph.B", "com.example.graph.C", "com.example.graph.D"),
                 textValues(inputJson.path("includedTypeContexts").findValues("qualifiedName"))
             );
-            assertTrue(textArray(inputJson.path("availableNextLayerTypeNames")).isEmpty());
+            assertEquals(List.of("com.example.graph.D"), textArray(inputJson.path("contextRequestFeedback").path("fulfilledTypeNames")));
             return openAiOutputText(openAiGeneratedClassResponse("""
-                package com.example.hierarchy;
+                package com.example.graph;
 
-                public class GreetingController_AIGenerated extends GreetingController {
-                    protected GreetingController_AIGenerated(
-                        com.example.hierarchy.GreetingGateway gateway,
-                        com.example.hierarchy.AuditTrail auditTrail
-                    ) {
-                        super(gateway, auditTrail);
-                    }
-
+                public class GraphService_AIGenerated implements GraphService {
                     @Override
-                    public com.example.hierarchy.GreetingResponse greet(com.example.hierarchy.GreetingRequest request) {
-                        return this.gateway.greet(request);
+                    public java.lang.String describe(com.example.graph.B root) {
+                        return root.c().d().value();
                     }
                 }
                 """));
         })) {
             result = ProcessorCompilation.compile(
-                tempDir.resolve("hierarchy-project"),
+                tempDir.resolve("graph-project"),
                 new AimpProcessor(),
                 List.of(
-                    SourceFile.of("com/example/hierarchy/AuditTrail.java", """
-                        package com.example.hierarchy;
+                    SourceFile.of("com/example/graph/B.java", """
+                        package com.example.graph;
 
-                        public interface AuditTrail {
-                            void record(String message);
+                        public final class B {
+                            private final C c;
+
+                            public B(C c) {
+                                this.c = c;
+                            }
+
+                            public C c() {
+                                return c;
+                            }
+                        }
+
+                        final class BSupport {
                         }
                         """),
-                    SourceFile.of("com/example/hierarchy/GreetingGateway.java", """
-                        package com.example.hierarchy;
+                    SourceFile.of("com/example/graph/C.java", """
+                        package com.example.graph;
 
-                        public interface GreetingGateway {
-                            GreetingResponse greet(GreetingRequest request);
-                        }
-                        """),
-                    SourceFile.of("com/example/hierarchy/GreetingRequest.java", """
-                        package com.example.hierarchy;
+                        public final class C {
+                            private final D d;
 
-                        public record GreetingRequest(String name) {
-                        }
-                        """),
-                    SourceFile.of("com/example/hierarchy/GreetingResponse.java", """
-                        package com.example.hierarchy;
+                            public C(D d) {
+                                this.d = d;
+                            }
 
-                        public record GreetingResponse(String message) {
-                        }
-                        """),
-                    SourceFile.of("com/example/hierarchy/BaseController.java", """
-                        package com.example.hierarchy;
-
-                        public abstract class BaseController {
-                            protected final AuditTrail auditTrail;
-
-                            protected BaseController(AuditTrail auditTrail) {
-                                this.auditTrail = auditTrail;
+                            public D d() {
+                                return d;
                             }
                         }
                         """),
-                    SourceFile.of("com/example/hierarchy/GreetingController.java", """
-                        package com.example.hierarchy;
+                    SourceFile.of("com/example/graph/D.java", """
+                        package com.example.graph;
+
+                        public record D(String value) {
+                        }
+                        """),
+                    SourceFile.of("com/example/graph/GraphService.java", """
+                        package com.example.graph;
 
                         import com.aimp.annotations.AIImplemented;
 
-                        public abstract class GreetingController extends BaseController {
-                            protected final GreetingGateway gateway;
-
-                            protected GreetingController(GreetingGateway gateway, AuditTrail auditTrail) {
-                                super(auditTrail);
-                                this.gateway = gateway;
-                            }
-
-                            @AIImplemented("Delegate to gateway.greet(request)")
-                            public abstract GreetingResponse greet(GreetingRequest request);
+                        public interface GraphService {
+                            @AIImplemented("Return root.c().d().value()")
+                            String describe(B root);
                         }
                         """)
                 ),
                 Map.of(),
-                server.processorOptions()
+                server.processorOptions("-Aaimp.synthesis.maxRounds=5")
             );
         }
 
         assertTrue(result.success(), () -> String.join("\n", result.messages(javax.tools.Diagnostic.Kind.ERROR)));
-        assertEquals(3, requestCount.get());
+        assertEquals(4, requestCount.get());
         assertTrue(
             result.messages(Diagnostic.Kind.NOTE).stream()
                 .anyMatch(message -> message.contains(
-                    "AIMP OpenAI requested additional context for contract com.example.hierarchy.GreetingController -> generated type com.example.hierarchy.GreetingController_AIGenerated in round 1"
-                ))
-        );
-        assertTrue(
-            result.messages(Diagnostic.Kind.NOTE).stream()
-                .anyMatch(message -> message.contains(
-                    "AIMP OpenAI requested additional context for contract com.example.hierarchy.GreetingController -> generated type com.example.hierarchy.GreetingController_AIGenerated in round 2"
+                    "AIMP OpenAI requested additional context for contract com.example.graph.GraphService -> generated type com.example.graph.GraphService_AIGenerated in round 3"
                 ))
         );
     }
 
     @Test
-    void promptFallsBackToAccessibleMemberTypesWhenMethodSignatureHasNoSourceAvailableTypes() throws Exception {
+    void llmCanRequestHelperTypeWhenMethodSignatureHasNoSourceAvailableTypes() throws Exception {
         CompilationResult result;
+        AtomicInteger requestCount = new AtomicInteger();
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
             JsonNode inputJson = requestInputJson(request);
-            assertSameElements(
-                List.of("com.example.noargs.Helper"),
-                textArray(inputJson.path("availableNextLayerTypeNames"))
-            );
-            assertTrue(inputJson.path("includedTypeContexts").isArray());
-            assertEquals(0, inputJson.path("includedTypeContexts").size());
+            int round = requestCount.incrementAndGet();
+            assertTrue(inputJson.path("availableNextLayerTypeNames").isMissingNode());
+            if (round == 1) {
+                assertEquals(0, inputJson.path("includedTypeContexts").size());
+                return openAiOutputText(openAiRequestContextTypesResponse(List.of("com.example.noargs.Helper")));
+            }
+
+            assertEquals(2, round);
+            assertSameElements(List.of("com.example.noargs.Helper"), textValues(inputJson.path("includedTypeContexts").findValues("qualifiedName")));
             return openAiOutputText(openAiGeneratedClassResponse("""
                 package com.example.noargs;
 
@@ -549,6 +516,7 @@ class AimpProcessorCompileTest {
         }
 
         assertTrue(result.success(), () -> String.join("\n", result.messages(javax.tools.Diagnostic.Kind.ERROR)));
+        assertEquals(2, requestCount.get());
     }
 
     @Test
@@ -558,10 +526,7 @@ class AimpProcessorCompileTest {
             JsonNode inputJson = requestInputJson(request);
             assertFalse(textArray(inputJson.path("responseContract").path("responseTypeValues"))
                 .contains(GeneratedClassSynthesisProtocol.RESPONSE_TYPE_INSUFFICIENT_CONTEXT));
-            assertSameElements(
-                List.of("com.example.payment.PaymentRequest", "com.example.payment.PaymentResult"),
-                textArray(inputJson.path("availableNextLayerTypeNames"))
-            );
+            assertTrue(inputJson.path("availableNextLayerTypeNames").isMissingNode());
             return openAiOutputText(openAiInsufficientContextResponse(
                 "Add concrete approval and rejection examples for request.reference()."
             ));
@@ -594,7 +559,7 @@ class AimpProcessorCompileTest {
                         """)
                 ),
                 Map.of(),
-                server.processorOptions()
+                server.processorOptions("-Aaimp.synthesis.maxRounds=4")
             );
         }
 
@@ -602,7 +567,7 @@ class AimpProcessorCompileTest {
         assertTrue(
             result.messages(javax.tools.Diagnostic.Kind.ERROR).stream()
                 .anyMatch(message -> message.contains(
-                    "returned insufficient_context for com.example.payment.PaymentService before the final synthesis round 3"
+                    "returned insufficient_context for com.example.payment.PaymentService before the final synthesis round 4"
                 ))
         );
         assertTrue(
@@ -726,12 +691,14 @@ class AimpProcessorCompileTest {
             return new FakeOpenAiServer(server);
         }
 
-        List<String> processorOptions() {
-            return List.of(
+        List<String> processorOptions(String... extraOptions) {
+            java.util.ArrayList<String> options = new java.util.ArrayList<>(List.of(
                 "-Aaimp.synthesis.model=gpt-5",
                 "-Aaimp.synthesis.apiKey=test-openai-key",
                 "-Aaimp.synthesis.openai.baseUrl=http://127.0.0.1:" + server.getAddress().getPort()
-            );
+            ));
+            options.addAll(List.of(extraOptions));
+            return List.copyOf(options);
         }
 
         @Override

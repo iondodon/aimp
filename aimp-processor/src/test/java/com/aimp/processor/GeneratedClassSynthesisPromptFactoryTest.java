@@ -72,7 +72,13 @@ class GeneratedClassSynthesisPromptFactoryTest {
                     List.of("com.example.payment.PaymentResult")
                 )
             ),
-            List.of("com.example.payment.PaymentResult"),
+            new ContextRequestFeedback(
+                List.of("com.example.payment.PaymentRequest"),
+                List.of(new RejectedContextTypeRequest(
+                    "com.example.payment.MissingType",
+                    "AIMP could not supply this type because its source is unavailable or it is not reachable from the contract context graph."
+                ))
+            ),
             2,
             3
         );
@@ -100,17 +106,28 @@ class GeneratedClassSynthesisPromptFactoryTest {
             "If implementation depends on a collaborator API that is not present in contractSource or includedTypeContexts, request more context instead of guessing or using dynamic invocation."
         ));
         assertTrue(textArray(root.path("constraints")).contains(
+            "When requesting more context, request only fully qualified Java type names. Do not request methods, fields, packages, wildcards, or prose descriptions."
+        ));
+        assertTrue(textArray(root.path("constraints")).contains(
             "Do not return responseType insufficient_context before the final round. In non-final rounds, return generated_class or request_context_types."
         ));
-        assertEquals(List.of("com.example.payment.PaymentResult"), textArray(root.path("availableNextLayerTypeNames")));
         assertTrue(root.path("contractSource").asText().contains("package com.example.payment;"));
         assertTrue(root.path("contractSource").asText().contains("import com.aimp.annotations.AIImplemented;"));
         assertTrue(root.path("contractSource").asText().contains("@AIImplemented(\"Charge a payment\")"));
         assertTrue(root.path("contractSource").asText().contains("PaymentResult charge(PaymentRequest request);"));
         assertEquals("com.example.payment.PaymentRequest", root.path("includedTypeContexts").get(0).path("qualifiedName").asText());
         assertTrue(root.path("includedTypeContexts").get(0).path("source").asText().contains("public record PaymentRequest(String reference) {"));
+        assertEquals(
+            List.of("com.example.payment.PaymentRequest"),
+            textArray(root.path("contextRequestFeedback").path("fulfilledTypeNames"))
+        );
+        assertEquals(
+            "com.example.payment.MissingType",
+            root.path("contextRequestFeedback").path("rejectedTypeRequests").get(0).path("qualifiedName").asText()
+        );
         assertTrue(root.path("annotatedMethods").isMissingNode());
         assertTrue(root.path("accessibleConstructors").isMissingNode());
+        assertTrue(root.path("availableNextLayerTypeNames").isMissingNode());
     }
 
     @Test
@@ -130,7 +147,7 @@ class GeneratedClassSynthesisPromptFactoryTest {
         );
 
         JsonNode root = JsonSupport.readTree(
-            GeneratedClassSynthesisPromptFactory.prompt(contract, List.of(), List.of(), 3, 3),
+            GeneratedClassSynthesisPromptFactory.prompt(contract, List.of(), null, 3, 3),
             "generated class synthesis prompt"
         );
 

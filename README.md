@@ -64,14 +64,15 @@ The processor reads the API key from the `OPENAI_API_KEY` environment variable b
 - `OPENAI_API_KEY` is required unless `-Aaimp.synthesis.apiKey=...` is passed explicitly.
 - `-Aaimp.synthesis.model=...` overrides the model, defaulting to `gpt-5`.
 - `-Aaimp.synthesis.openai.baseUrl=...` can override the OpenAI base URL, which is mainly useful for tests or proxies.
+- `-Aaimp.synthesis.maxRounds=...` overrides the maximum number of synthesis rounds, defaulting to `6`.
 - During compilation, AIMP emits compiler notes before and after each OpenAI synthesis call so you can see exactly which handwritten contract invoked the LLM and which generated type is being written.
-- AIMP and the model communicate through a fixed JSON contract on every synthesis round. The request is a JSON document describing the contract, the current round, the available next-layer types, and the required response contract. The response is a JSON document with an explicit `responseType`.
-- The processor sends contract metadata plus the full handwritten contract source in the first OpenAI round.
-- If the model needs more source context, it can request a bounded next layer of source-available referenced types by fully qualified name, and AIMP will call OpenAI again with those type snippets added.
-- AIMP does not let that source-type expansion go arbitrarily deep. After the bounded follow-up rounds are exhausted, the build fails and the caller must add more business context by enriching `@AIImplemented("...")` or the handwritten contract code.
+- AIMP and the model communicate through a fixed JSON contract on every synthesis round. The request is a JSON document describing the contract, the current round, the currently included type-context files, any request-resolution feedback from the previous round, and the required response contract. The response is a JSON document with an explicit `responseType`.
+- The processor sends contract metadata plus the full handwritten contract source file in the first OpenAI round.
+- If the model needs more source context, it can request additional source-available referenced types by fully qualified name, and AIMP will call OpenAI again with the full defining source files for those types added.
+- AIMP validates those type requests against a bounded reachable-type graph and a configurable round limit. After those follow-up rounds are exhausted, the build fails and the caller must add more business context by enriching `@AIImplemented("...")` or the handwritten contract code.
 - The prompt allows the model to introduce helper fields, constants, constructors, and helper methods when needed.
 - Annotation copying is now owned by the generated-class prompt rather than by `aimp.yml`.
-- If OpenAI sees that even the bounded type-layer expansion is not enough, it can return an explicit caller-facing missing-context request. AIMP fails compilation and surfaces that request so the caller can add the requested details and compile again.
+- If OpenAI sees that even the bounded type expansion is not enough in the final round, it can return an explicit caller-facing missing-context request. AIMP fails compilation and surfaces that request so the caller can add the requested details and compile again.
 - The returned content must always be JSON. When `responseType` is `generated_class`, the generated Java source is carried in the `generatedClassSource` field.
 
 ## Examples
