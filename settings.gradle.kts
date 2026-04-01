@@ -2,7 +2,6 @@ rootProject.name = "aimp"
 
 include(
     "aimp-annotations",
-    "aimp-config",
     "aimp-model",
     "aimp-core",
     "aimp-processor",

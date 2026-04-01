@@ -4,7 +4,6 @@ plugins {
 }
 
 dependencies {
-    api(project(":aimp-config"))
     api(project(":aimp-model"))
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
