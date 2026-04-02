@@ -42,20 +42,6 @@ class GeneratedClassSynthesisPromptFactoryTest {
                 PaymentResult charge(PaymentRequest request);
             }
             """,
-            List.of(
-                new ReferencedTypeModel(
-                    "com.example.payment.PaymentRequest",
-                    "public record PaymentRequest(String reference) {\n}",
-                    1,
-                    List.of("com.example.payment.PaymentResult")
-                ),
-                new ReferencedTypeModel(
-                    "com.example.payment.PaymentResult",
-                    "public record PaymentResult(String status) {\n}",
-                    2,
-                    List.of()
-                )
-            ),
             List.of(),
             List.of(),
             List.of(),
@@ -68,8 +54,7 @@ class GeneratedClassSynthesisPromptFactoryTest {
                 new ReferencedTypeModel(
                     "com.example.payment.PaymentRequest",
                     "public record PaymentRequest(String reference) {\n}",
-                    1,
-                    List.of("com.example.payment.PaymentResult")
+                    2
                 )
             ),
             new ContextRequestFeedback(
@@ -109,6 +94,9 @@ class GeneratedClassSynthesisPromptFactoryTest {
             "When requesting more context, request only fully qualified Java type names. Do not request methods, fields, packages, wildcards, or prose descriptions."
         ));
         assertTrue(textArray(root.path("constraints")).contains(
+            "AIMP validates requested types after each round and reports fulfilled and rejected requests in contextRequestFeedback."
+        ));
+        assertTrue(textArray(root.path("constraints")).contains(
             "Do not return responseType insufficient_context before the final round. In non-final rounds, return generated_class or request_context_types."
         ));
         assertTrue(root.path("contractSource").asText().contains("package com.example.payment;"));
@@ -140,7 +128,6 @@ class GeneratedClassSynthesisPromptFactoryTest {
             ContractKind.INTERFACE,
             Visibility.PUBLIC,
             "package com.example.payment;\n\npublic interface PaymentService {}",
-            List.of(),
             List.of(),
             List.of(),
             List.of(),

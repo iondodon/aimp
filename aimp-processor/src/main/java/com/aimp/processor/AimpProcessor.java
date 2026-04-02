@@ -1,7 +1,6 @@
 package com.aimp.processor;
 
 import com.sun.source.tree.CompilationUnitTree;
-import com.sun.source.util.SourcePositions;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
 import com.aimp.annotations.AIImplemented;
@@ -13,7 +12,6 @@ import com.aimp.model.ContractModel;
 import com.aimp.model.GeneratedElementKind;
 import com.aimp.model.MethodModel;
 import com.aimp.model.ParameterModel;
-import com.aimp.model.ReferencedTypeModel;
 import com.aimp.model.TypeParameterModel;
 import com.aimp.model.Visibility;
 import java.io.IOException;
@@ -24,7 +22,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -149,7 +146,7 @@ public final class AimpProcessor extends AbstractProcessor {
             String generatedQualifiedName = GeneratedTypeNaming.generatedQualifiedName(contract.packageName(), contract.simpleName());
             String generatedSource;
             try {
-                generatedSource = generatedClassSynthesizer.synthesize(contract);
+                generatedSource = generatedClassSynthesizer.synthesize(contract, createTypeContextResolver(entry.getKey()));
             } catch (MethodBodySynthesisException exception) {
                 error(entry.getKey(), "Failed to synthesize generated class: " + exception.getMessage());
                 continue;
@@ -190,6 +187,10 @@ public final class AimpProcessor extends AbstractProcessor {
 
     private void note(String message) {
         messager.printMessage(Diagnostic.Kind.NOTE, message);
+    }
+
+    private TypeContextResolver createTypeContextResolver(TypeElement contractType) {
+        return new JavacTypeContextResolver(contractType);
     }
 
     private ContractModel buildContract(TypeElement contractType, List<ExecutableElement> methods) {
@@ -238,14 +239,6 @@ public final class AimpProcessor extends AbstractProcessor {
             return null;
         }
 
-        List<ReferencedTypeModel> referencedTypes;
-        try {
-            referencedTypes = collectReferencedTypes(contractType, methods);
-        } catch (MethodBodySynthesisException exception) {
-            error(contractType, "Failed to configure compile-time synthesis: " + exception.getMessage());
-            return null;
-        }
-
         return new ContractModel(
             packageName,
             contractType.getSimpleName().toString(),
@@ -253,7 +246,6 @@ public final class AimpProcessor extends AbstractProcessor {
             contractKind,
             visibilityOf(contractType),
             extractContractSourceSnippet(contractType),
-            referencedTypes,
             toTypeParameters(contractType),
             extractAnnotations(contractType.getAnnotationMirrors()),
             constructors,
@@ -374,150 +366,6 @@ public final class AimpProcessor extends AbstractProcessor {
         return result;
     }
 
-    private List<ReferencedTypeModel> collectReferencedTypes(TypeElement contractType, List<ExecutableElement> methods) {
-        String contractPackage = processingEnv.getElementUtils().getPackageOf(contractType).getQualifiedName().toString();
-        String contractQualifiedName = contractType.getQualifiedName().toString();
-
-        int maxContextDepth = Math.max(1, synthesisBackendFactory.maxRounds(processingEnv.getOptions()) - 1);
-        LinkedHashMap<String, ReferencedTypeModel> referencedTypes = new LinkedHashMap<>();
-        LinkedHashSet<String> discoveredTypeNames = new LinkedHashSet<>();
-        LinkedHashMap<String, SourceAvailableType> currentLayer = collectSourceAvailableTypes(
-            collectMethodSignatureReferencedTypes(contractType, methods),
-            contractQualifiedName
-        );
-        LinkedHashMap<String, SourceAvailableType> contractContextTypes = collectSourceAvailableTypes(
-            collectDirectReferencedTypes(contractType, contractPackage),
-            contractQualifiedName
-        );
-        if (currentLayer.isEmpty()) {
-            currentLayer.putAll(contractContextTypes);
-        } else {
-            contractContextTypes.forEach(currentLayer::putIfAbsent);
-        }
-
-        for (int layer = 1; layer <= maxContextDepth && !currentLayer.isEmpty(); layer++) {
-            LinkedHashMap<String, SourceAvailableType> nextLayer = new LinkedHashMap<>();
-            LinkedHashSet<String> currentLayerTypeNames = new LinkedHashSet<>(currentLayer.keySet());
-            discoveredTypeNames.addAll(currentLayerTypeNames);
-
-            for (SourceAvailableType currentType : currentLayer.values()) {
-                LinkedHashMap<String, SourceAvailableType> directNextTypes = collectSourceAvailableTypes(
-                    collectDirectReferencedTypes(currentType.typeElement(), contractPackage),
-                    contractQualifiedName
-                );
-
-                LinkedHashMap<String, SourceAvailableType> reachableNextTypes = new LinkedHashMap<>();
-                for (Map.Entry<String, SourceAvailableType> entry : directNextTypes.entrySet()) {
-                    if (discoveredTypeNames.contains(entry.getKey()) || currentLayerTypeNames.contains(entry.getKey())) {
-                        continue;
-                    }
-                    reachableNextTypes.putIfAbsent(entry.getKey(), entry.getValue());
-                    nextLayer.putIfAbsent(entry.getKey(), entry.getValue());
-                }
-
-                referencedTypes.putIfAbsent(
-                    currentType.qualifiedName(),
-                    new ReferencedTypeModel(
-                        currentType.qualifiedName(),
-                        currentType.sourceSnippet(),
-                        layer,
-                        List.copyOf(reachableNextTypes.keySet())
-                    )
-                );
-            }
-
-            currentLayer = nextLayer;
-        }
-
-        return List.copyOf(referencedTypes.values());
-    }
-
-    private LinkedHashSet<TypeElement> collectMethodSignatureReferencedTypes(
-        TypeElement contractType,
-        List<ExecutableElement> methods
-    ) {
-        DirectTypeCollector collector = new DirectTypeCollector(contractType.getQualifiedName().toString());
-        for (ExecutableElement method : methods) {
-            collector.visit(method.getReturnType(), null);
-            for (VariableElement parameter : method.getParameters()) {
-                collector.visit(parameter.asType(), null);
-            }
-        }
-        return collector.collectedTypes();
-    }
-
-    private LinkedHashSet<TypeElement> collectDirectReferencedTypes(TypeElement rootType, String contractPackage) {
-        DirectTypeCollector collector = new DirectTypeCollector(rootType.getQualifiedName().toString());
-        collectAccessibleMemberTypes(rootType, contractPackage, collector);
-        return collector.collectedTypes();
-    }
-
-    private LinkedHashMap<String, SourceAvailableType> collectSourceAvailableTypes(
-        Iterable<TypeElement> types,
-        String contractQualifiedName
-    ) {
-        LinkedHashMap<String, SourceAvailableType> collected = new LinkedHashMap<>();
-        for (TypeElement type : types) {
-            String qualifiedName = type.getQualifiedName().toString();
-            if (qualifiedName.equals(contractQualifiedName) || collected.containsKey(qualifiedName)) {
-                continue;
-            }
-
-            String sourceSnippet = extractTypeSourceSnippet(type);
-            if (sourceSnippet.isBlank()) {
-                continue;
-            }
-
-            collected.put(qualifiedName, new SourceAvailableType(type, qualifiedName, sourceSnippet));
-        }
-        return collected;
-    }
-
-    private void collectAccessibleMemberTypes(TypeElement rootType, String contractPackage, DirectTypeCollector collector) {
-        TypeElement currentType = rootType;
-        boolean declaringContract = true;
-        while (currentType != null) {
-            String currentPackage = processingEnv.getElementUtils().getPackageOf(currentType).getQualifiedName().toString();
-
-            for (TypeElement memberType : ElementFilter.typesIn(currentType.getEnclosedElements())) {
-                if (isAccessibleFromGeneratedType(memberType, declaringContract, contractPackage, currentPackage)) {
-                    collector.collectTypeElement(memberType);
-                }
-            }
-
-            for (VariableElement field : ElementFilter.fieldsIn(currentType.getEnclosedElements())) {
-                if (isAccessibleFromGeneratedType(field, declaringContract, contractPackage, currentPackage)) {
-                    collector.visit(field.asType(), null);
-                }
-            }
-
-            for (ExecutableElement constructor : ElementFilter.constructorsIn(currentType.getEnclosedElements())) {
-                if (isAccessibleFromGeneratedType(constructor, declaringContract, contractPackage, currentPackage)) {
-                    collectExecutableReferencedTypes(constructor, collector);
-                }
-            }
-
-            for (ExecutableElement method : ElementFilter.methodsIn(currentType.getEnclosedElements())) {
-                if (isAccessibleFromGeneratedType(method, declaringContract, contractPackage, currentPackage)) {
-                    collectExecutableReferencedTypes(method, collector);
-                }
-            }
-
-            currentType = superclassOf(currentType);
-            declaringContract = false;
-        }
-    }
-
-    private void collectExecutableReferencedTypes(ExecutableElement executable, DirectTypeCollector collector) {
-        collector.visit(executable.getReturnType(), null);
-        for (VariableElement parameter : executable.getParameters()) {
-            collector.visit(parameter.asType(), null);
-        }
-        for (TypeMirror thrownType : executable.getThrownTypes()) {
-            collector.visit(thrownType, null);
-        }
-    }
-
     private boolean isAccessibleFromGeneratedType(
         Element member,
         boolean declaringContract,
@@ -542,7 +390,8 @@ public final class AimpProcessor extends AbstractProcessor {
         if (superclass == null || superclass.getKind() == TypeKind.NONE) {
             return null;
         }
-        if (superclass instanceof DeclaredType declaredType && declaredType.asElement() instanceof TypeElement typeElement) {
+        if (superclass instanceof javax.lang.model.type.DeclaredType declaredType
+            && declaredType.asElement() instanceof TypeElement typeElement) {
             return typeElement;
         }
         return null;
@@ -550,90 +399,6 @@ public final class AimpProcessor extends AbstractProcessor {
 
     private String renderType(TypeMirror typeMirror) {
         return typeMirror.accept(new AnnotationFreeTypeRenderer(), null);
-    }
-
-    private static final class DirectTypeCollector extends SimpleTypeVisitor14<Void, Void> {
-        private final String rootQualifiedName;
-        private final LinkedHashMap<String, TypeElement> collectedTypes = new LinkedHashMap<>();
-
-        private DirectTypeCollector(String rootQualifiedName) {
-            this.rootQualifiedName = rootQualifiedName;
-        }
-
-        private void collectTypeElement(TypeElement typeElement) {
-            String qualifiedName = typeElement.getQualifiedName().toString();
-            if (qualifiedName.equals(rootQualifiedName)) {
-                return;
-            }
-            collectedTypes.putIfAbsent(qualifiedName, typeElement);
-        }
-
-        private LinkedHashSet<TypeElement> collectedTypes() {
-            return new LinkedHashSet<>(collectedTypes.values());
-        }
-
-        @Override
-        protected Void defaultAction(TypeMirror typeMirror, Void unused) {
-            return null;
-        }
-
-        @Override
-        public Void visitArray(ArrayType type, Void unused) {
-            visit(type.getComponentType(), unused);
-            return null;
-        }
-
-        @Override
-        public Void visitDeclared(DeclaredType type, Void unused) {
-            if (type.asElement() instanceof TypeElement typeElement) {
-                collectTypeElement(typeElement);
-            }
-            for (TypeMirror typeArgument : type.getTypeArguments()) {
-                visit(typeArgument, unused);
-            }
-            return null;
-        }
-
-        @Override
-        public Void visitTypeVariable(TypeVariable type, Void unused) {
-            if (type.getUpperBound() != null) {
-                visit(type.getUpperBound(), unused);
-            }
-            if (type.getLowerBound() != null) {
-                visit(type.getLowerBound(), unused);
-            }
-            return null;
-        }
-
-        @Override
-        public Void visitWildcard(WildcardType type, Void unused) {
-            if (type.getExtendsBound() != null) {
-                visit(type.getExtendsBound(), unused);
-            }
-            if (type.getSuperBound() != null) {
-                visit(type.getSuperBound(), unused);
-            }
-            return null;
-        }
-
-        @Override
-        public Void visitIntersection(IntersectionType type, Void unused) {
-            for (TypeMirror bound : type.getBounds()) {
-                visit(bound, unused);
-            }
-            return null;
-        }
-
-        @Override
-        public Void visitUnion(UnionType type, Void unused) {
-            for (TypeMirror alternative : type.getAlternatives()) {
-                visit(alternative, unused);
-            }
-            return null;
-        }
-    }
-
-    private record SourceAvailableType(TypeElement typeElement, String qualifiedName, String sourceSnippet) {
     }
 
     private static final class AnnotationFreeTypeRenderer extends SimpleTypeVisitor14<String, Void> {
@@ -864,6 +629,162 @@ public final class AimpProcessor extends AbstractProcessor {
 
     private String extractCompilationUnitSource(TypeElement typeElement) {
         return extractTypeSourceSnippet(typeElement);
+    }
+
+    private final class JavacTypeContextResolver implements TypeContextResolver {
+        private final TypeElement contractType;
+        private final String contractPackage;
+        private final String contractQualifiedName;
+        private final Map<String, SourceAvailableType> cache = new java.util.LinkedHashMap<>();
+
+        private JavacTypeContextResolver(TypeElement contractType) {
+            this.contractType = contractType;
+            this.contractPackage = processingEnv.getElementUtils().getPackageOf(contractType).getQualifiedName().toString();
+            this.contractQualifiedName = contractType.getQualifiedName().toString();
+        }
+
+        @Override
+        public TypeContextResolution resolve(List<String> requestedTypeNames, Set<String> alreadyIncludedTypeNames, int roundNumber) {
+            List<com.aimp.model.ReferencedTypeModel> fulfilledTypes = new ArrayList<>();
+            List<RejectedContextTypeRequest> rejectedTypeRequests = new ArrayList<>();
+            java.util.LinkedHashSet<String> deduplicatedRequests = new java.util.LinkedHashSet<>(requestedTypeNames);
+
+            for (String requestedTypeName : deduplicatedRequests) {
+                String typeName = requestedTypeName == null ? "" : requestedTypeName.trim();
+                if (typeName.isEmpty()) {
+                    rejectedTypeRequests.add(new RejectedContextTypeRequest(
+                        requestedTypeName,
+                        "AIMP could not supply this request because it was blank."
+                    ));
+                    continue;
+                }
+                if (!looksLikeFullyQualifiedName(typeName)) {
+                    rejectedTypeRequests.add(new RejectedContextTypeRequest(
+                        typeName,
+                        "AIMP could not supply this request because it is not a concrete fully qualified Java type name."
+                    ));
+                    continue;
+                }
+                if (typeName.equals(contractQualifiedName)) {
+                    rejectedTypeRequests.add(new RejectedContextTypeRequest(
+                        typeName,
+                        "AIMP already provides the contract source in contractSource."
+                    ));
+                    continue;
+                }
+                if (alreadyIncludedTypeNames.contains(typeName)) {
+                    rejectedTypeRequests.add(new RejectedContextTypeRequest(
+                        typeName,
+                        "AIMP already included this type in an earlier round."
+                    ));
+                    continue;
+                }
+
+                SourceAvailableType sourceAvailableType = resolveSourceAvailableType(typeName);
+                if (sourceAvailableType == null) {
+                    rejectedTypeRequests.add(new RejectedContextTypeRequest(
+                        typeName,
+                        "AIMP could not supply this type because its source is unavailable or the type cannot be resolved."
+                    ));
+                    continue;
+                }
+                if (!isTypeAccessibleFromGeneratedType(sourceAvailableType.typeElement())) {
+                    rejectedTypeRequests.add(new RejectedContextTypeRequest(
+                        typeName,
+                        "AIMP could not supply this type because the generated implementation cannot access it safely."
+                    ));
+                    continue;
+                }
+
+                fulfilledTypes.add(new com.aimp.model.ReferencedTypeModel(
+                    sourceAvailableType.qualifiedName(),
+                    sourceAvailableType.sourceSnippet(),
+                    roundNumber
+                ));
+            }
+
+            return new TypeContextResolution(fulfilledTypes, rejectedTypeRequests);
+        }
+
+        private SourceAvailableType resolveSourceAvailableType(String qualifiedName) {
+            if (cache.containsKey(qualifiedName)) {
+                return cache.get(qualifiedName);
+            }
+
+            TypeElement typeElement = processingEnv.getElementUtils().getTypeElement(qualifiedName);
+            if (typeElement == null) {
+                cache.put(qualifiedName, null);
+                return null;
+            }
+
+            String sourceSnippet = extractCompilationUnitSource(typeElement);
+            if (sourceSnippet.isBlank()) {
+                cache.put(qualifiedName, null);
+                return null;
+            }
+
+            SourceAvailableType resolved = new SourceAvailableType(typeElement, qualifiedName, sourceSnippet);
+            cache.put(qualifiedName, resolved);
+            return resolved;
+        }
+
+        private boolean isTypeAccessibleFromGeneratedType(TypeElement typeElement) {
+            Element current = typeElement;
+            while (current instanceof TypeElement currentType) {
+                Element enclosingElement = currentType.getEnclosingElement();
+                String declaringPackage = processingEnv.getElementUtils().getPackageOf(currentType).getQualifiedName().toString();
+
+                if (!isAccessibleFromGeneratedType(
+                    currentType,
+                    isDeclaredInsideType(currentType, contractType),
+                    contractPackage,
+                    declaringPackage
+                )) {
+                    return false;
+                }
+
+                if (!(enclosingElement instanceof TypeElement enclosingType)) {
+                    return true;
+                }
+                current = enclosingType;
+            }
+            return false;
+        }
+
+        private boolean isDeclaredInsideType(TypeElement currentType, TypeElement rootType) {
+            Element current = currentType;
+            while (current instanceof TypeElement typeElement) {
+                if (typeElement.equals(rootType)) {
+                    return true;
+                }
+                current = typeElement.getEnclosingElement();
+            }
+            return false;
+        }
+
+        private boolean looksLikeFullyQualifiedName(String typeName) {
+            String[] parts = typeName.split("\\.");
+            if (parts.length < 2) {
+                return false;
+            }
+            for (String part : parts) {
+                if (part.isEmpty()) {
+                    return false;
+                }
+                if (!Character.isJavaIdentifierStart(part.charAt(0))) {
+                    return false;
+                }
+                for (int index = 1; index < part.length(); index++) {
+                    if (!Character.isJavaIdentifierPart(part.charAt(index))) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+    }
+
+    private record SourceAvailableType(TypeElement typeElement, String qualifiedName, String sourceSnippet) {
     }
 
     private void error(Element element, String message) {

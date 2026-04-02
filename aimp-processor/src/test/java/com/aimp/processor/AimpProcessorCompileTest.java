@@ -454,6 +454,73 @@ class AimpProcessorCompileTest {
     }
 
     @Test
+    void llmCanRequestTypeMentionedOnlyInJavadoc() throws Exception {
+        CompilationResult result;
+        AtomicInteger requestCount = new AtomicInteger();
+        try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
+            JsonNode inputJson = requestInputJson(request);
+            int round = requestCount.incrementAndGet();
+            if (round == 1) {
+                assertTrue(inputJson.path("contractSource").asText().contains("AppClockSettings"));
+                assertEquals(0, inputJson.path("includedTypeContexts").size());
+                return openAiOutputText(openAiRequestContextTypesResponse(List.of("com.example.docs.AppClockSettings")));
+            }
+
+            assertEquals(2, round);
+            assertSameElements(
+                List.of("com.example.docs.AppClockSettings"),
+                textValues(inputJson.path("includedTypeContexts").findValues("qualifiedName"))
+            );
+            assertTrue(inputJson.path("includedTypeContexts").get(0).path("source").asText().contains("DEFAULT_ZONE"));
+            return openAiOutputText(openAiGeneratedClassResponse("""
+                package com.example.docs;
+
+                public class ClockContract_AIGenerated implements ClockContract {
+                    @Override
+                    public java.lang.String defaultZoneId() {
+                        return com.example.docs.AppClockSettings.DEFAULT_ZONE;
+                    }
+                }
+                """));
+        })) {
+            result = ProcessorCompilation.compile(
+                tempDir.resolve("javadoc-project"),
+                new AimpProcessor(),
+                List.of(
+                    SourceFile.of("com/example/docs/AppClockSettings.java", """
+                        package com.example.docs;
+
+                        public final class AppClockSettings {
+                            public static final String DEFAULT_ZONE = "UTC";
+
+                            private AppClockSettings() {
+                            }
+                        }
+                        """),
+                    SourceFile.of("com/example/docs/ClockContract.java", """
+                        package com.example.docs;
+
+                        import com.aimp.annotations.AIImplemented;
+
+                        public interface ClockContract {
+                            /**
+                             * Return the default application zone from {@link com.example.docs.AppClockSettings}.
+                             */
+                            @AIImplemented("Return the default application zone")
+                            String defaultZoneId();
+                        }
+                        """)
+                ),
+                Map.of(),
+                server.processorOptions()
+            );
+        }
+
+        assertTrue(result.success(), () -> String.join("\n", result.messages(javax.tools.Diagnostic.Kind.ERROR)));
+        assertEquals(2, requestCount.get());
+    }
+
+    @Test
     void llmCanRequestHelperTypeWhenMethodSignatureHasNoSourceAvailableTypes() throws Exception {
         CompilationResult result;
         AtomicInteger requestCount = new AtomicInteger();

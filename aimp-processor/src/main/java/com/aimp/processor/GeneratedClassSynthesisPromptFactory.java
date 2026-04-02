@@ -87,11 +87,12 @@ final class GeneratedClassSynthesisPromptFactory {
                 "Do not rely on private members of referenced types.",
                 "If implementation depends on a collaborator API that is not present in contractSource or includedTypeContexts, request more context instead of guessing or using dynamic invocation.",
                 "When requesting more context, request only fully qualified Java type names. Do not request methods, fields, packages, wildcards, or prose descriptions.",
+                "AIMP validates requested types after each round and reports fulfilled and rejected requests in contextRequestFeedback.",
                 "Prefer requesting types directly referenced from contractSource or from the source code already present in includedTypeContexts.",
                 finalRound
                     ? "Use responseType insufficient_context only in this final round when the current context still cannot support a safe implementation."
                     : "Do not return responseType insufficient_context before the final round. In non-final rounds, return generated_class or request_context_types.",
-                "Use responseType insufficient_context only when additional type layers will not solve the missing context."
+                "Use responseType insufficient_context only when additional requested type context will not solve the missing context."
             )
         );
 

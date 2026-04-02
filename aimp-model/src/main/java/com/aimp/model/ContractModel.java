@@ -11,7 +11,6 @@ import java.util.List;
  * @param kind the contract kind
  * @param visibility the contract visibility
  * @param sourceSnippet the full source file content for the contract compilation unit when available
- * @param referencedTypes referenced types that may be supplied as extra context
  * @param typeParameters the contract type parameters
  * @param annotations annotations declared on the contract type
  * @param constructors constructors declared by the contract
@@ -24,7 +23,6 @@ public record ContractModel(
     ContractKind kind,
     Visibility visibility,
     String sourceSnippet,
-    List<ReferencedTypeModel> referencedTypes,
     List<TypeParameterModel> typeParameters,
     List<AnnotationUsage> annotations,
     List<ConstructorModel> constructors,
@@ -39,7 +37,6 @@ public record ContractModel(
      * @param kind the contract kind
      * @param visibility the contract visibility
      * @param sourceSnippet the full source file content for the contract compilation unit when available
-     * @param referencedTypes referenced types that may be supplied as extra context
      * @param typeParameters the contract type parameters
      * @param annotations annotations declared on the contract type
      * @param constructors constructors declared by the contract
@@ -47,7 +44,6 @@ public record ContractModel(
      */
     public ContractModel {
         sourceSnippet = sourceSnippet == null ? "" : sourceSnippet;
-        referencedTypes = List.copyOf(referencedTypes);
         typeParameters = List.copyOf(typeParameters);
         annotations = List.copyOf(annotations);
         constructors = List.copyOf(constructors);

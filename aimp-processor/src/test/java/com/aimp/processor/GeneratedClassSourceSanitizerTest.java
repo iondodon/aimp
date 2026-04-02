@@ -125,7 +125,6 @@ class GeneratedClassSourceSanitizerTest {
             "",
             List.of(),
             List.of(),
-            List.of(),
             List.of(new ConstructorModel(
                 Visibility.PUBLIC,
                 List.of(new ParameterModel("greetingService", "com.example.greeting.service.GreetingService", false, List.of())),
@@ -186,7 +185,6 @@ class GeneratedClassSourceSanitizerTest {
             ContractKind.INTERFACE,
             Visibility.PUBLIC,
             "",
-            List.of(),
             List.of(),
             List.of(),
             List.of(),
