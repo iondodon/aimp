@@ -69,6 +69,7 @@ import javax.tools.JavaFileObject;
  */
 public final class AimpProcessor extends AbstractProcessor {
     private static final String OPTION_PROJECT_DIR = "aimp.projectDir";
+    private static final String OPTION_EMIT_DIAGNOSTIC_NOTES = "aimp.emitDiagnosticNotes";
 
     private final ProcessorSynthesisBackendFactory synthesisBackendFactory = new ProcessorSynthesisBackendFactory();
     private final Set<String> generatedTypeNames = new TreeSet<>();
@@ -104,7 +105,8 @@ public final class AimpProcessor extends AbstractProcessor {
             ProcessorSynthesisBackendFactory.OPTION_SYNTHESIS_TIMEOUT_MILLIS,
             ProcessorSynthesisBackendFactory.OPTION_SYNTHESIS_API_KEY,
             ProcessorSynthesisBackendFactory.OPTION_OPENAI_BASE_URL,
-            ProcessorSynthesisBackendFactory.OPTION_SYNTHESIS_MAX_ROUNDS
+            ProcessorSynthesisBackendFactory.OPTION_SYNTHESIS_MAX_ROUNDS,
+            OPTION_EMIT_DIAGNOSTIC_NOTES
         );
     }
 
@@ -187,19 +189,20 @@ public final class AimpProcessor extends AbstractProcessor {
                 if (validation.valid()) {
                     generatedSource = storedImplementation.generatedSource();
                     note(
-                        "AIMP reused persisted implementation for contract "
-                            + contract.qualifiedName()
-                            + " fingerprint "
-                            + shortHash(contract.fingerprintHash())
+                        AimpLogFormatter.format(
+                            "cache-hit",
+                            AimpLogFormatter.field("contract", contract.qualifiedName()),
+                            AimpLogFormatter.field("fingerprint", shortHash(contract.fingerprintHash()))
+                        )
                     );
                 } else {
                     note(
-                        "AIMP ignored stale persisted implementation for contract "
-                            + contract.qualifiedName()
-                            + " fingerprint "
-                            + shortHash(contract.fingerprintHash())
-                            + " because "
-                            + validation.reason()
+                        AimpLogFormatter.format(
+                            "cache-stale",
+                            AimpLogFormatter.field("contract", contract.qualifiedName()),
+                            AimpLogFormatter.field("fingerprint", shortHash(contract.fingerprintHash())),
+                            AimpLogFormatter.field("reason", validation.reason())
+                        )
                     );
                     storedImplementation = null;
                     generatedSource = null;
@@ -233,10 +236,11 @@ public final class AimpProcessor extends AbstractProcessor {
                 }
 
                 note(
-                    "AIMP stored generated implementation for contract "
-                        + contract.qualifiedName()
-                        + " fingerprint "
-                        + shortHash(contract.fingerprintHash())
+                    AimpLogFormatter.format(
+                        "cache-store",
+                        AimpLogFormatter.field("contract", contract.qualifiedName()),
+                        AimpLogFormatter.field("fingerprint", shortHash(contract.fingerprintHash()))
+                    )
                 );
             }
 
@@ -318,7 +322,11 @@ public final class AimpProcessor extends AbstractProcessor {
     }
 
     private void note(String message) {
-        messager.printMessage(Diagnostic.Kind.NOTE, message);
+        System.err.println(message);
+        System.err.flush();
+        if (Boolean.parseBoolean(processingEnv.getOptions().getOrDefault(OPTION_EMIT_DIAGNOSTIC_NOTES, "false"))) {
+            messager.printMessage(Diagnostic.Kind.NOTE, message);
+        }
     }
 
     private TypeContextResolver createTypeContextResolver(TypeElement contractType) {

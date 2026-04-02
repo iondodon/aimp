@@ -51,17 +51,16 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
     public GeneratedClassSynthesisResult synthesize(ContractModel contract, TypeContextResolver typeContextResolver) {
         String contractQualifiedName = contract.qualifiedName();
         String generatedQualifiedName = GeneratedTypeNaming.generatedQualifiedName(contract.packageName(), contract.simpleName());
-        String logTarget = "contract " + contractQualifiedName + " -> generated type " + generatedQualifiedName;
         LinkedHashMap<String, ReferencedTypeModel> includedTypesByName = new LinkedHashMap<>();
         ContextRequestFeedback contextRequestFeedback = null;
 
         for (int roundNumber = 1; roundNumber <= maxSynthesisRounds; roundNumber++) {
             String outputText = invokeOpenAi(
                 contract,
+                generatedQualifiedName,
                 List.copyOf(includedTypesByName.values()),
                 contextRequestFeedback,
-                roundNumber,
-                logTarget
+                roundNumber
             );
 
             GeneratedClassSynthesisProtocol.SynthesisResponse synthesisResponse =
@@ -70,7 +69,7 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
                 case GeneratedClassSynthesisProtocol.RESPONSE_TYPE_REQUEST_CONTEXT_TYPES -> {
                     contextRequestFeedback = handleRequestedContextTypes(
                         contract,
-                        logTarget,
+                        generatedQualifiedName,
                         roundNumber,
                         synthesisResponse.requestedTypeNames(),
                         typeContextResolver,
@@ -124,7 +123,7 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
 
     private ContextRequestFeedback handleRequestedContextTypes(
         ContractModel contract,
-        String logTarget,
+        String generatedQualifiedName,
         int roundNumber,
         List<String> requestedTypeNames,
         TypeContextResolver typeContextResolver,
@@ -150,12 +149,13 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
         LinkedHashSet<String> deduplicatedRequests = new LinkedHashSet<>(requestedTypeNames);
 
         logger.accept(
-            "AIMP OpenAI requested additional context for "
-                + logTarget
-                + " in round "
-                + roundNumber
-                + ": "
-                + String.join(", ", deduplicatedRequests)
+            formatLog(
+                "context-request",
+                contract.qualifiedName(),
+                generatedQualifiedName,
+                AimpLogFormatter.field("round", roundNumber + "/" + maxSynthesisRounds),
+                AimpLogFormatter.field("types", String.join(", ", deduplicatedRequests))
+            )
         );
 
         TypeContextResolution resolution = typeContextResolver.resolve(
@@ -173,14 +173,18 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
 
         if (!resolution.rejectedTypeRequests().isEmpty()) {
             logger.accept(
-                "AIMP could not provide some requested context for "
-                    + logTarget
-                    + " in round "
-                    + roundNumber
-                    + ": "
-                    + resolution.rejectedTypeRequests().stream()
-                        .map(rejected -> rejected.qualifiedName() + " (" + rejected.reason() + ")")
-                        .collect(Collectors.joining(", "))
+                formatLog(
+                    "context-reject",
+                    contract.qualifiedName(),
+                    generatedQualifiedName,
+                    AimpLogFormatter.field("round", roundNumber + "/" + maxSynthesisRounds),
+                    AimpLogFormatter.field(
+                        "rejected",
+                        resolution.rejectedTypeRequests().stream()
+                            .map(rejected -> rejected.qualifiedName() + " (" + rejected.reason() + ")")
+                            .collect(Collectors.joining(", "))
+                    )
+                )
             );
         }
 
@@ -189,21 +193,20 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
 
     private String invokeOpenAi(
         ContractModel contract,
+        String generatedQualifiedName,
         List<ReferencedTypeModel> includedReferencedTypes,
         ContextRequestFeedback contextRequestFeedback,
-        int roundNumber,
-        String logTarget
+        int roundNumber
     ) {
         long startedAt = System.nanoTime();
         logger.accept(
-            "AIMP invoking OpenAI for "
-                + logTarget
-                + " with model "
-                + model
-                + " in round "
-                + roundNumber
-                + " of "
-                + maxSynthesisRounds
+            formatLog(
+                "openai-start",
+                contract.qualifiedName(),
+                generatedQualifiedName,
+                AimpLogFormatter.field("model", model),
+                AimpLogFormatter.field("round", roundNumber + "/" + maxSynthesisRounds)
+            )
         );
 
         HttpRequest request = HttpRequest.newBuilder(endpoint)
@@ -220,22 +223,32 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
             response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            logger.accept("AIMP OpenAI call failed for " + logTarget + " after " + elapsedMillis(startedAt) + " ms");
+            logger.accept(formatLog(
+                "openai-fail",
+                contract.qualifiedName(),
+                generatedQualifiedName,
+                AimpLogFormatter.field("elapsedMs", elapsedMillis(startedAt))
+            ));
             throw new MethodBodySynthesisException("Failed to call OpenAI Responses API at " + endpoint, exception);
         } catch (IOException exception) {
-            logger.accept("AIMP OpenAI call failed for " + logTarget + " after " + elapsedMillis(startedAt) + " ms");
+            logger.accept(formatLog(
+                "openai-fail",
+                contract.qualifiedName(),
+                generatedQualifiedName,
+                AimpLogFormatter.field("elapsedMs", elapsedMillis(startedAt))
+            ));
             throw new MethodBodySynthesisException("Failed to call OpenAI Responses API at " + endpoint, exception);
         }
 
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             logger.accept(
-                "AIMP OpenAI call failed for "
-                    + logTarget
-                    + " with HTTP "
-                    + response.statusCode()
-                    + " after "
-                    + elapsedMillis(startedAt)
-                    + " ms"
+                formatLog(
+                    "openai-fail",
+                    contract.qualifiedName(),
+                    generatedQualifiedName,
+                    AimpLogFormatter.field("elapsedMs", elapsedMillis(startedAt)),
+                    AimpLogFormatter.field("http", response.statusCode())
+                )
             );
             throw new MethodBodySynthesisException(
                 "OpenAI Responses API returned HTTP " + response.statusCode() + ": " + response.body()
@@ -243,8 +256,26 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
         }
 
         String outputText = OpenAiResponsesParser.extractOutputText(response.body());
-        logger.accept("AIMP received OpenAI output for " + logTarget + " in " + elapsedMillis(startedAt) + " ms");
+        logger.accept(formatLog(
+            "openai-done",
+            contract.qualifiedName(),
+            generatedQualifiedName,
+            AimpLogFormatter.field("elapsedMs", elapsedMillis(startedAt))
+        ));
         return outputText;
+    }
+
+    private static String formatLog(
+        String event,
+        String contractQualifiedName,
+        String generatedQualifiedName,
+        String... fields
+    ) {
+        List<String> allFields = new java.util.ArrayList<>();
+        allFields.add(AimpLogFormatter.field("contract", contractQualifiedName));
+        allFields.add(AimpLogFormatter.field("generated", generatedQualifiedName));
+        java.util.Collections.addAll(allFields, fields);
+        return AimpLogFormatter.format(event, allFields.toArray(String[]::new));
     }
 
     private String requestBody(

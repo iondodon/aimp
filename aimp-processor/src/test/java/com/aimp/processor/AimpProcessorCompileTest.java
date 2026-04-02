@@ -150,15 +150,15 @@ class AimpProcessorCompileTest {
             .contains("return new com.example.payment.PaymentResult(\"approved-openai\");"));
         assertTrue(
             result.messages(Diagnostic.Kind.NOTE).stream()
-                .anyMatch(message -> message.contains(
-                    "AIMP invoking OpenAI for contract com.example.payment.PaymentService -> generated type com.example.payment.PaymentService_AIGenerated"
-                ))
+                .anyMatch(message -> message.contains("[AIMP][openai-start]")
+                    && message.contains("contract=com.example.payment.PaymentService")
+                    && message.contains("generated=com.example.payment.PaymentService_AIGenerated"))
         );
         assertTrue(
             result.messages(Diagnostic.Kind.NOTE).stream()
-                .anyMatch(message -> message.contains(
-                    "AIMP received OpenAI output for contract com.example.payment.PaymentService -> generated type com.example.payment.PaymentService_AIGenerated"
-                ))
+                .anyMatch(message -> message.contains("[AIMP][openai-done]")
+                    && message.contains("contract=com.example.payment.PaymentService")
+                    && message.contains("generated=com.example.payment.PaymentService_AIGenerated"))
         );
     }
 
@@ -221,9 +221,9 @@ class AimpProcessorCompileTest {
         assertEquals(1, requestCount.get());
         assertTrue(
             secondResult.messages(Diagnostic.Kind.NOTE).stream()
-                .anyMatch(message -> message.contains(
-                    "AIMP reused persisted implementation for contract com.example.payment.PaymentService fingerprint"
-                ))
+                .anyMatch(message -> message.contains("[AIMP][cache-hit]")
+                    && message.contains("contract=com.example.payment.PaymentService")
+                    && message.contains("fingerprint="))
         );
         assertTrue(secondResult.generatedSource("com/example/payment/PaymentService_AIGenerated.java")
             .contains("approved-v1"));
@@ -625,9 +625,10 @@ class AimpProcessorCompileTest {
         assertEquals(4, requestCount.get());
         assertTrue(
             result.messages(Diagnostic.Kind.NOTE).stream()
-                .anyMatch(message -> message.contains(
-                    "AIMP OpenAI requested additional context for contract com.example.graph.GraphService -> generated type com.example.graph.GraphService_AIGenerated in round 3"
-                ))
+                .anyMatch(message -> message.contains("[AIMP][context-request]")
+                    && message.contains("contract=com.example.graph.GraphService")
+                    && message.contains("generated=com.example.graph.GraphService_AIGenerated")
+                    && message.contains("round=3/5"))
         );
     }
 

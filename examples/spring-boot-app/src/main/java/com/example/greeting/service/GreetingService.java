@@ -18,7 +18,7 @@ public interface GreetingService {
      * @return generated greeting response
      */
     @AIImplemented("""
-       rETURN A HARDCODED NAME OF NAME1
+       rETURN A HARDCODED NAME OF NAME11
         """)
-    GreetingResponse greet(@Valid GreetingRequest request);
+    GreetingResponse greett(@Valid GreetingRequest request);
 }

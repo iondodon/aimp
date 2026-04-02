@@ -82,6 +82,7 @@ public final class ProcessorCompilation {
             options.add(classesDirectory.toString());
             options.add("-s");
             options.add(generatedSourcesDirectory.toString());
+            options.add("-Aaimp.emitDiagnosticNotes=true");
             options.addAll(additionalOptions);
 
             JavaCompiler.CompilationTask task = compiler.getTask(
