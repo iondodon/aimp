@@ -1,5 +1,6 @@
 package com.example.greeting.service;
 
+import com.aimp.annotations.AIContract;
 import com.aimp.annotations.AIImplemented;
 import jakarta.validation.Valid;
 import org.springframework.stereotype.Service;
@@ -10,6 +11,7 @@ import org.springframework.validation.annotation.Validated;
  */
 @Service
 @Validated
+@AIContract(version = "1")
 public interface GreetingService {
     /**
      * Creates a localized greeting response.

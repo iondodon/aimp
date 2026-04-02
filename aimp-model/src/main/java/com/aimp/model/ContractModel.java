@@ -8,6 +8,7 @@ import java.util.List;
  * @param packageName the contract package name
  * @param simpleName the contract simple name
  * @param qualifiedName the contract fully qualified name
+ * @param version the explicit contract persistence version
  * @param kind the contract kind
  * @param visibility the contract visibility
  * @param sourceSnippet the full source file content for the contract compilation unit when available
@@ -20,6 +21,7 @@ public record ContractModel(
     String packageName,
     String simpleName,
     String qualifiedName,
+    String version,
     ContractKind kind,
     Visibility visibility,
     String sourceSnippet,
@@ -34,6 +36,7 @@ public record ContractModel(
      * @param packageName the contract package name
      * @param simpleName the contract simple name
      * @param qualifiedName the contract fully qualified name
+     * @param version the explicit contract persistence version
      * @param kind the contract kind
      * @param visibility the contract visibility
      * @param sourceSnippet the full source file content for the contract compilation unit when available
@@ -43,6 +46,10 @@ public record ContractModel(
      * @param methods annotated abstract methods to implement
      */
     public ContractModel {
+        version = version == null ? "1" : version;
+        if (version.isBlank()) {
+            throw new IllegalArgumentException("version must not be blank");
+        }
         sourceSnippet = sourceSnippet == null ? "" : sourceSnippet;
         typeParameters = List.copyOf(typeParameters);
         annotations = List.copyOf(annotations);

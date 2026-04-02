@@ -1,10 +1,12 @@
 package com.example.payment;
 
+import com.aimp.annotations.AIContract;
 import com.aimp.annotations.AIImplemented;
 
 /**
  * Example contract implemented by AIMP during compilation.
  */
+@AIContract(version = "1")
 public interface PaymentService {
     /**
      * Charges a payment request.

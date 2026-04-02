@@ -8,6 +8,7 @@ dependencies {
     implementation(project(":aimp-core"))
     implementation(project(":aimp-model"))
     implementation("com.fasterxml.jackson.core:jackson-databind:2.18.2")
+    implementation("org.xerial:sqlite-jdbc:3.46.1.3")
 
     testImplementation(project(":aimp-testkit"))
     testImplementation(platform("org.junit:junit-bom:5.11.4"))

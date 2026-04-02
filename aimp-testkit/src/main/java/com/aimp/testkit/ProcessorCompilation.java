@@ -16,10 +16,24 @@ import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 
+/**
+ * Compiles Java sources with an in-process annotation processor for tests.
+ */
 public final class ProcessorCompilation {
     private ProcessorCompilation() {
     }
 
+    /**
+     * Compiles the supplied source files with additional project files and compiler options.
+     *
+     * @param projectDirectory temporary project root used for compilation inputs and outputs
+     * @param processor annotation processor under test
+     * @param sourceFiles Java source files to compile
+     * @param projectFiles extra non-source files to materialize in the project directory
+     * @param additionalOptions extra javac options
+     * @return compilation result with diagnostics and generated-output locations
+     * @throws IOException if files cannot be written or outputs cannot be prepared
+     */
     public static CompilationResult compile(
         Path projectDirectory,
         Processor processor,
@@ -31,6 +45,10 @@ public final class ProcessorCompilation {
         if (compiler == null) {
             throw new IllegalStateException("No system Java compiler is available.");
         }
+
+        deleteDirectoryIfExists(projectDirectory.resolve("src"));
+        deleteDirectoryIfExists(projectDirectory.resolve("classes"));
+        deleteDirectoryIfExists(projectDirectory.resolve("generated"));
 
         Path sourceDirectory = Files.createDirectories(projectDirectory.resolve("src"));
         Path classesDirectory = Files.createDirectories(projectDirectory.resolve("classes"));
@@ -80,11 +98,37 @@ public final class ProcessorCompilation {
         }
     }
 
+    /**
+     * Compiles only the supplied Java source files with the processor under test.
+     *
+     * @param projectDirectory temporary project root used for compilation inputs and outputs
+     * @param processor annotation processor under test
+     * @param sourceFiles Java source files to compile
+     * @return compilation result with diagnostics and generated-output locations
+     * @throws IOException if files cannot be written or outputs cannot be prepared
+     */
     public static CompilationResult compile(
         Path projectDirectory,
         Processor processor,
         List<SourceFile> sourceFiles
     ) throws IOException {
         return compile(projectDirectory, processor, sourceFiles, Map.of(), List.of());
+    }
+
+    private static void deleteDirectoryIfExists(Path directory) throws IOException {
+        if (!Files.exists(directory)) {
+            return;
+        }
+        try (var paths = Files.walk(directory)) {
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException exception) {
+                    throw new UncheckedIOException(exception);
+                }
+            });
+        } catch (UncheckedIOException exception) {
+            throw exception.getCause();
+        }
     }
 }

@@ -3,6 +3,7 @@ package com.aimp.processor;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
+import com.aimp.annotations.AIContract;
 import com.aimp.annotations.AIImplemented;
 import com.aimp.core.GeneratedTypeNaming;
 import com.aimp.model.AnnotationUsage;
@@ -18,6 +19,9 @@ import java.io.IOException;
 import java.io.Reader;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.net.URI;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -64,8 +68,11 @@ import javax.tools.JavaFileObject;
  * generates concrete implementations in generated sources.
  */
 public final class AimpProcessor extends AbstractProcessor {
+    private static final String OPTION_PROJECT_DIR = "aimp.projectDir";
+
     private final ProcessorSynthesisBackendFactory synthesisBackendFactory = new ProcessorSynthesisBackendFactory();
     private final Set<String> generatedTypeNames = new TreeSet<>();
+    private final Map<Path, SqliteGeneratedImplementationStore> implementationStores = new LinkedHashMap<>();
 
     private GeneratedClassSynthesizer generatedClassSynthesizer;
 
@@ -92,6 +99,7 @@ public final class AimpProcessor extends AbstractProcessor {
     @Override
     public Set<String> getSupportedOptions() {
         return Set.of(
+            OPTION_PROJECT_DIR,
             ProcessorSynthesisBackendFactory.OPTION_SYNTHESIS_MODEL,
             ProcessorSynthesisBackendFactory.OPTION_SYNTHESIS_TIMEOUT_MILLIS,
             ProcessorSynthesisBackendFactory.OPTION_SYNTHESIS_API_KEY,
@@ -102,7 +110,7 @@ public final class AimpProcessor extends AbstractProcessor {
 
     @Override
     public Set<String> getSupportedAnnotationTypes() {
-        return Set.of(AIImplemented.class.getCanonicalName());
+        return Set.of(AIImplemented.class.getCanonicalName(), AIContract.class.getCanonicalName());
     }
 
     @Override
@@ -139,18 +147,79 @@ public final class AimpProcessor extends AbstractProcessor {
                 continue;
             }
 
-            if (!ensureGeneratedClassSynthesizer()) {
-                return true;
-            }
-
             String generatedQualifiedName = GeneratedTypeNaming.generatedQualifiedName(contract.packageName(), contract.simpleName());
             String generatedSource;
+
+            SqliteGeneratedImplementationStore implementationStore;
             try {
-                generatedSource = generatedClassSynthesizer.synthesize(contract, createTypeContextResolver(entry.getKey()));
-            } catch (MethodBodySynthesisException exception) {
-                error(entry.getKey(), "Failed to synthesize generated class: " + exception.getMessage());
+                implementationStore = implementationStore(entry.getKey());
+            } catch (GeneratedImplementationStoreException exception) {
+                error(entry.getKey(), "Failed to open the AIMP implementation store: " + exception.getMessage());
                 continue;
             }
+
+            StoredGeneratedImplementation storedImplementation;
+            try {
+                storedImplementation = implementationStore.find(contract.qualifiedName(), contract.version()).orElse(null);
+            } catch (GeneratedImplementationStoreException exception) {
+                error(entry.getKey(), "Failed to read the AIMP implementation store: " + exception.getMessage());
+                continue;
+            }
+
+            if (storedImplementation != null) {
+                if (!generatedQualifiedName.equals(storedImplementation.generatedQualifiedName())) {
+                    error(
+                        entry.getKey(),
+                        "Stored generated implementation for "
+                            + contract.qualifiedName()
+                            + " version "
+                            + contract.version()
+                            + " targets "
+                            + storedImplementation.generatedQualifiedName()
+                            + " instead of "
+                            + generatedQualifiedName
+                            + "."
+                    );
+                    continue;
+                }
+                generatedSource = storedImplementation.generatedSource();
+                note(
+                    "AIMP reused persisted implementation for contract "
+                        + contract.qualifiedName()
+                        + " version "
+                        + contract.version()
+                );
+            } else {
+                if (!ensureGeneratedClassSynthesizer()) {
+                    return true;
+                }
+                try {
+                    generatedSource = generatedClassSynthesizer.synthesize(contract, createTypeContextResolver(entry.getKey()));
+                } catch (MethodBodySynthesisException exception) {
+                    error(entry.getKey(), "Failed to synthesize generated class: " + exception.getMessage());
+                    continue;
+                }
+
+                try {
+                    implementationStore.save(new StoredGeneratedImplementation(
+                        contract.qualifiedName(),
+                        contract.version(),
+                        generatedQualifiedName,
+                        generatedSource
+                    ));
+                } catch (GeneratedImplementationStoreException exception) {
+                    error(entry.getKey(), "Failed to persist the generated implementation: " + exception.getMessage());
+                    continue;
+                }
+
+                note(
+                    "AIMP stored generated implementation for contract "
+                        + contract.qualifiedName()
+                        + " version "
+                        + contract.version()
+                );
+            }
+
             if (generatedTypeNames.contains(generatedQualifiedName)) {
                 continue;
             }
@@ -169,6 +238,49 @@ public final class AimpProcessor extends AbstractProcessor {
         }
 
         return true;
+    }
+
+    private SqliteGeneratedImplementationStore implementationStore(TypeElement contractType) {
+        Path projectDirectory = resolveProjectDirectory(contractType);
+        return implementationStores.computeIfAbsent(
+            projectDirectory,
+            path -> new SqliteGeneratedImplementationStore(path.resolve(".aimp").resolve("aimp.db"))
+        );
+    }
+
+    private Path resolveProjectDirectory(TypeElement contractType) {
+        String projectDirectoryOption = trimToNull(processingEnv.getOptions().get(OPTION_PROJECT_DIR));
+        if (projectDirectoryOption != null) {
+            return Path.of(projectDirectoryOption).toAbsolutePath().normalize();
+        }
+
+        if (trees != null) {
+            TreePath path = trees.getPath(contractType);
+            if (path != null && path.getCompilationUnit() != null && path.getCompilationUnit().getSourceFile() != null) {
+                URI sourceFileUri = path.getCompilationUnit().getSourceFile().toUri();
+                if ("file".equalsIgnoreCase(sourceFileUri.getScheme())) {
+                    Path sourcePath = Paths.get(sourceFileUri).toAbsolutePath().normalize();
+                    Path inferredProjectDirectory = inferProjectDirectory(sourcePath);
+                    if (inferredProjectDirectory != null) {
+                        return inferredProjectDirectory;
+                    }
+                }
+            }
+        }
+
+        return Paths.get("").toAbsolutePath().normalize();
+    }
+
+    private Path inferProjectDirectory(Path sourcePath) {
+        for (Path current = sourcePath.getParent(); current != null; current = current.getParent()) {
+            if (current.getFileName() != null && "src".equals(current.getFileName().toString())) {
+                Path parent = current.getParent();
+                if (parent != null) {
+                    return parent;
+                }
+            }
+        }
+        return sourcePath.getParent();
     }
 
     private boolean ensureGeneratedClassSynthesizer() {
@@ -239,10 +351,16 @@ public final class AimpProcessor extends AbstractProcessor {
             return null;
         }
 
+        String contractVersion = contractVersion(contractType);
+        if (contractVersion == null) {
+            return null;
+        }
+
         return new ContractModel(
             packageName,
             contractType.getSimpleName().toString(),
             contractType.getQualifiedName().toString(),
+            contractVersion,
             contractKind,
             visibilityOf(contractType),
             extractContractSourceSnippet(contractType),
@@ -251,6 +369,20 @@ public final class AimpProcessor extends AbstractProcessor {
             constructors,
             methodModels
         );
+    }
+
+    private String contractVersion(TypeElement contractType) {
+        AIContract contractAnnotation = contractType.getAnnotation(AIContract.class);
+        if (contractAnnotation == null) {
+            return "1";
+        }
+
+        String version = trimToNull(contractAnnotation.version());
+        if (version == null) {
+            error(contractType, "@AIContract version must not be blank.");
+            return null;
+        }
+        return version;
     }
 
     private ContractKind resolveContractKind(TypeElement contractType) {
@@ -529,7 +661,8 @@ public final class AimpProcessor extends AbstractProcessor {
     private AnnotationUsage toAnnotationUsage(AnnotationMirror mirror) {
         TypeElement annotationType = (TypeElement) mirror.getAnnotationType().asElement();
         String annotationName = annotationType.getQualifiedName().toString();
-        if (annotationName.equals(AIImplemented.class.getCanonicalName())) {
+        if (annotationName.equals(AIImplemented.class.getCanonicalName())
+            || annotationName.equals(AIContract.class.getCanonicalName())) {
             return null;
         }
         return new AnnotationUsage(annotationName, renderAnnotation(mirror, annotationType), resolveTargets(annotationType));
@@ -793,5 +926,13 @@ public final class AimpProcessor extends AbstractProcessor {
 
     private void error(String message) {
         messager.printMessage(Diagnostic.Kind.ERROR, message);
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

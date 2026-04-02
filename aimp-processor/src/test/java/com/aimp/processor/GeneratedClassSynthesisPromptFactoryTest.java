@@ -30,6 +30,7 @@ class GeneratedClassSynthesisPromptFactoryTest {
             "com.example.payment",
             "PaymentService",
             "com.example.payment.PaymentService",
+            "7",
             ContractKind.INTERFACE,
             Visibility.PUBLIC,
             """
@@ -75,6 +76,7 @@ class GeneratedClassSynthesisPromptFactoryTest {
         assertEquals(2, root.path("round").path("current").asInt());
         assertEquals(3, root.path("round").path("max").asInt());
         assertEquals("PaymentService_AIGenerated", root.path("generationTarget").path("generatedSimpleName").asText());
+        assertEquals("7", root.path("generationTarget").path("contractVersion").asText());
         assertEquals("implement", root.path("generationTarget").path("relationship").asText());
         assertEquals(
             List.of("generated_class", "request_context_types"),
@@ -125,6 +127,7 @@ class GeneratedClassSynthesisPromptFactoryTest {
             "com.example.payment",
             "PaymentService",
             "com.example.payment.PaymentService",
+            "1",
             ContractKind.INTERFACE,
             Visibility.PUBLIC,
             "package com.example.payment;\n\npublic interface PaymentService {}",
