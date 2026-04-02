@@ -3,7 +3,7 @@ package com.aimp.model;
 import java.util.List;
 
 /**
- * Describes an annotated abstract contract method.
+ * Describes an abstract contract method that the generated implementation must provide.
  *
  * @param name the method name
  * @param returnType the method return type
@@ -12,7 +12,6 @@ import java.util.List;
  * @param parameters the method parameters
  * @param thrownTypes the checked exceptions declared by the method
  * @param annotations annotations declared on the method
- * @param description the {@code @AIImplemented} description
  */
 public record MethodModel(
     String name,
@@ -21,8 +20,7 @@ public record MethodModel(
     List<TypeParameterModel> typeParameters,
     List<ParameterModel> parameters,
     List<String> thrownTypes,
-    List<AnnotationUsage> annotations,
-    String description
+    List<AnnotationUsage> annotations
 ) {
     /**
      * Creates an immutable method model.
@@ -34,7 +32,6 @@ public record MethodModel(
      * @param parameters the method parameters
      * @param thrownTypes the checked exceptions declared by the method
      * @param annotations annotations declared on the method
-     * @param description the {@code @AIImplemented} description
      */
     public MethodModel {
         typeParameters = List.copyOf(typeParameters);

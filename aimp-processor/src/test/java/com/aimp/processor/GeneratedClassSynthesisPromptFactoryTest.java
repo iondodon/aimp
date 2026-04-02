@@ -23,8 +23,7 @@ class GeneratedClassSynthesisPromptFactoryTest {
             List.of(),
             List.of(new ParameterModel("request", "com.example.payment.PaymentRequest", false, List.of())),
             List.of(),
-            List.of(),
-            "Charge a payment"
+            List.of()
         );
         ContractModel contract = new ContractModel(
             "com.example.payment",
@@ -38,8 +37,11 @@ class GeneratedClassSynthesisPromptFactoryTest {
 
             import com.aimp.annotations.AIImplemented;
 
+            @AIImplemented
             public interface PaymentService {
-                @AIImplemented("Charge a payment")
+                /**
+                 * Charge a payment.
+                 */
                 PaymentResult charge(PaymentRequest request);
             }
             """,
@@ -104,7 +106,8 @@ class GeneratedClassSynthesisPromptFactoryTest {
         ));
         assertTrue(root.path("contractSource").asText().contains("package com.example.payment;"));
         assertTrue(root.path("contractSource").asText().contains("import com.aimp.annotations.AIImplemented;"));
-        assertTrue(root.path("contractSource").asText().contains("@AIImplemented(\"Charge a payment\")"));
+        assertTrue(root.path("contractSource").asText().contains("@AIImplemented"));
+        assertTrue(root.path("contractSource").asText().contains("Charge a payment."));
         assertTrue(root.path("contractSource").asText().contains("PaymentResult charge(PaymentRequest request);"));
         assertEquals("com.example.payment.PaymentRequest", root.path("includedTypeContexts").get(0).path("qualifiedName").asText());
         assertTrue(root.path("includedTypeContexts").get(0).path("source").asText().contains("public record PaymentRequest(String reference) {"));

@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * HTTP entry point for the Spring Boot greeting example.
  */
+@AIImplemented
 @RestController
 @RequestMapping("/api/greetings")
 public abstract class GreetingController {
@@ -31,14 +32,14 @@ public abstract class GreetingController {
     }
 
     /**
-     * Creates a greeting response from the request payload.
+     * Creates a greeting response from the request payload by delegating directly
+     * to {@link #greetingService} and returning its result.
+     * The generated override should preserve the Spring MVC and validation
+     * annotations required for request handling.
      *
      * @param request greeting request payload
      * @return resolved greeting response
      */
     @PostMapping
-    @AIImplemented("""
-       Call the service  
-        """)
     public abstract GreetingResponse greet(@Valid @RequestBody GreetingRequest request);
 }

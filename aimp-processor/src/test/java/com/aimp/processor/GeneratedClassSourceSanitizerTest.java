@@ -45,9 +45,7 @@ class GeneratedClassSourceSanitizerTest {
             ("package com.example.payment;%n%n"
                 + "import com.aimp.annotations.AIImplemented;%n%n"
                 + "public class PaymentService_AIGenerated implements PaymentService {%n"
-                + "    @AIImplemented(\"\"\"%n"
-                + "        bad%n"
-                + "        \"\"\")%n"
+                + "    @AIImplemented%n"
                 + "    public java.lang.String charge() {%n"
                 + "        return \"ok\";%n"
                 + "    }%n"
@@ -138,8 +136,7 @@ class GeneratedClassSourceSanitizerTest {
                 List.of(),
                 List.of(new ParameterModel("request", "com.example.greeting.service.GreetingRequest", false, List.of())),
                 List.of(),
-                List.of(),
-                "Call the service"
+                List.of()
             ))
         );
 

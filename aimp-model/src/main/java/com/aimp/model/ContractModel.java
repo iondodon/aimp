@@ -15,7 +15,7 @@ import java.util.List;
  * @param typeParameters the contract type parameters
  * @param annotations annotations declared on the contract type
  * @param constructors constructors declared by the contract
- * @param methods annotated abstract methods to implement
+ * @param methods abstract methods to implement
  */
 public record ContractModel(
     String packageName,
@@ -43,7 +43,7 @@ public record ContractModel(
      * @param typeParameters the contract type parameters
      * @param annotations annotations declared on the contract type
      * @param constructors constructors declared by the contract
-     * @param methods annotated abstract methods to implement
+     * @param methods abstract methods to implement
      */
     public ContractModel {
         if (fingerprintHash == null || fingerprintHash.isBlank()) {

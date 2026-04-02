@@ -42,7 +42,8 @@ class AimpProcessorCompileTest {
             assertEquals("com.example.payment.PaymentService", inputJson.path("generationTarget").path("contractQualifiedName").asText());
             assertTrue(inputJson.path("contractSource").asText().contains("package com.example.payment;"));
             assertTrue(inputJson.path("contractSource").asText().contains("import com.aimp.annotations.AIImplemented;"));
-            assertTrue(inputJson.path("contractSource").asText().contains("@AIImplemented(\"Charge a payment and return the result\")"));
+            assertTrue(inputJson.path("contractSource").asText().contains("@AIImplemented"));
+            assertTrue(inputJson.path("contractSource").asText().contains("Charge a payment and return the result"));
             assertTrue(inputJson.path("annotatedMethods").isMissingNode());
             assertTrue(inputJson.path("accessibleConstructors").isMissingNode());
             assertTrue(inputJson.path("availableNextLayerTypeNames").isMissingNode());
@@ -69,8 +70,11 @@ class AimpProcessorCompileTest {
 
                         import com.aimp.annotations.AIImplemented;
 
+                        @AIImplemented
                         public interface PaymentService {
-                            @AIImplemented("Charge a payment and return the result")
+                            /**
+                             * Charge a payment and return the result.
+                             */
                             PaymentResult charge(PaymentRequest request);
                         }
                         """)
@@ -134,8 +138,11 @@ class AimpProcessorCompileTest {
 
                         import com.aimp.annotations.AIImplemented;
 
+                        @AIImplemented
                         public interface PaymentService {
-                            @AIImplemented("Charge a payment and return the result")
+                            /**
+                             * Charge a payment and return the result.
+                             */
                             PaymentResult charge(PaymentRequest request);
                         }
                         """)
@@ -189,8 +196,11 @@ class AimpProcessorCompileTest {
 
                     import com.aimp.annotations.AIImplemented;
 
+                    @AIImplemented
                     public interface PaymentService {
-                        @AIImplemented("Charge a payment and return the result")
+                        /**
+                         * Charge a payment and return the result.
+                         */
                         PaymentResult charge(PaymentRequest request);
                     }
                     """),
@@ -210,8 +220,11 @@ class AimpProcessorCompileTest {
 
                 import com.aimp.annotations.AIImplemented;
 
+                @AIImplemented
                 public interface PaymentService {
-                    @AIImplemented("Charge a payment and return the result")
+                    /**
+                     * Charge a payment and return the result.
+                     */
                     PaymentResult charge(PaymentRequest request);
                 }
                 """)
@@ -263,6 +276,55 @@ class AimpProcessorCompileTest {
                 projectDirectory,
                 new AimpProcessor(),
                 paymentContractSources(paymentServiceWithDescription("Charge a payment, validate the reference, and return the result")),
+                Map.of(),
+                server.processorOptions()
+            );
+            assertTrue(secondResult.success(), () -> String.join("\n", secondResult.messages(Diagnostic.Kind.ERROR)));
+            assertTrue(secondResult.generatedSource("com/example/payment/PaymentService_AIGenerated.java")
+                .contains("approved-v2"));
+        }
+
+        assertEquals(2, requestCount.get());
+    }
+
+    @Test
+    void typeJavadocChangeTriggersNewOpenAiGeneration() throws Exception {
+        Path projectDirectory = tempDir.resolve("type-javadoc-project");
+        AtomicInteger requestCount = new AtomicInteger();
+
+        try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
+            int invocation = requestCount.incrementAndGet();
+            String generatedValue = invocation == 1 ? "approved-v1" : "approved-v2";
+            return openAiOutputText(openAiGeneratedClassResponse("""
+                package com.example.payment;
+
+                public class PaymentService_AIGenerated implements PaymentService {
+                    @Override
+                    public com.example.payment.PaymentResult charge(com.example.payment.PaymentRequest request) {
+                        return new com.example.payment.PaymentResult("%s");
+                    }
+                }
+                """.formatted(generatedValue)));
+        })) {
+            CompilationResult firstResult = ProcessorCompilation.compile(
+                projectDirectory,
+                new AimpProcessor(),
+                paymentContractSources(paymentServiceWithTypeJavadoc(
+                    "Handles payment charging.",
+                    "Charge a payment and return the result"
+                )),
+                Map.of(),
+                server.processorOptions()
+            );
+            assertTrue(firstResult.success(), () -> String.join("\n", firstResult.messages(Diagnostic.Kind.ERROR)));
+
+            CompilationResult secondResult = ProcessorCompilation.compile(
+                projectDirectory,
+                new AimpProcessor(),
+                paymentContractSources(paymentServiceWithTypeJavadoc(
+                    "Handles payment charging with documented behavior.",
+                    "Charge a payment and return the result"
+                )),
                 Map.of(),
                 server.processorOptions()
             );
@@ -369,8 +431,11 @@ class AimpProcessorCompileTest {
 
                         import com.aimp.annotations.AIImplemented;
 
+                        @AIImplemented
                         public interface EchoService {
-                            @AIImplemented("Return an LLM-generated answer")
+                            /**
+                             * Return an LLM-generated answer.
+                             */
                             String answer(String prompt);
                         }
                         """)
@@ -485,12 +550,15 @@ class AimpProcessorCompileTest {
                         import org.springframework.stereotype.Service;
                         import org.springframework.transaction.annotation.Transactional;
 
+                        @AIImplemented
                         @Service
                         public abstract class OrderServiceBase {
                             protected OrderServiceBase(String region) {
                             }
 
-                            @AIImplemented("Reserve inventory and return the result")
+                            /**
+                             * Reserve inventory and return the result.
+                             */
                             @Transactional
                             public abstract OrderResult place(@Valid OrderRequest request);
                         }
@@ -610,8 +678,11 @@ class AimpProcessorCompileTest {
 
                         import com.aimp.annotations.AIImplemented;
 
+                        @AIImplemented
                         public interface GraphService {
-                            @AIImplemented("Return root.c().d().value()")
+                            /**
+                             * Return root.c().d().value().
+                             */
                             String describe(B root);
                         }
                         """)
@@ -681,11 +752,11 @@ class AimpProcessorCompileTest {
 
                         import com.aimp.annotations.AIImplemented;
 
+                        @AIImplemented
                         public interface ClockContract {
                             /**
                              * Return the default application zone from {@link com.example.docs.AppClockSettings}.
                              */
-                            @AIImplemented("Return the default application zone")
                             String defaultZoneId();
                         }
                         """)
@@ -745,6 +816,7 @@ class AimpProcessorCompileTest {
 
                         import com.aimp.annotations.AIImplemented;
 
+                        @AIImplemented
                         public abstract class StatusService {
                             protected final Helper helper;
 
@@ -752,7 +824,9 @@ class AimpProcessorCompileTest {
                                 this.helper = helper;
                             }
 
-                            @AIImplemented("Return the helper status")
+                            /**
+                             * Return the helper status.
+                             */
                             public abstract String status();
                         }
                         """)
@@ -799,8 +873,11 @@ class AimpProcessorCompileTest {
 
                         import com.aimp.annotations.AIImplemented;
 
+                        @AIImplemented
                         public interface PaymentService {
-                            @AIImplemented("Charge a payment and return the result")
+                            /**
+                             * Charge a payment and return the result.
+                             */
                             PaymentResult charge(PaymentRequest request);
                         }
                         """)
@@ -834,8 +911,8 @@ class AimpProcessorCompileTest {
 
                     import com.aimp.annotations.AIImplemented;
 
+                    @AIImplemented
                     public abstract class BadService {
-                        @AIImplemented("Should fail")
                         public String value() {
                             return "bad";
                         }
@@ -847,7 +924,7 @@ class AimpProcessorCompileTest {
         assertFalse(result.success());
         assertTrue(
             result.messages(javax.tools.Diagnostic.Kind.ERROR).stream()
-                .anyMatch(message -> message.contains("concrete methods"))
+                .anyMatch(message -> message.contains("at least one abstract instance method"))
         );
     }
 
@@ -937,16 +1014,31 @@ class AimpProcessorCompileTest {
     }
 
     private static String paymentServiceWithDescription(String description) {
+        return paymentServiceWithTypeJavadoc("", description);
+    }
+
+    private static String paymentServiceWithTypeJavadoc(String typeJavadoc, String description) {
+        String renderedTypeJavadoc = typeJavadoc.isBlank()
+            ? ""
+            : """
+            /**
+             * %s
+             */
+            """.formatted(typeJavadoc);
         return """
             package com.example.payment;
 
             import com.aimp.annotations.AIImplemented;
 
+            %s
+            @AIImplemented
             public interface PaymentService {
-                @AIImplemented("%s")
+                /**
+                 * %s
+                 */
                 PaymentResult charge(PaymentRequest request);
             }
-            """.formatted(description);
+            """.formatted(renderedTypeJavadoc, description);
     }
 
     private record OpenAiRequest(String authorization, String body) {

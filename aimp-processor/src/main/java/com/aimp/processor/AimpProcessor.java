@@ -64,7 +64,7 @@ import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 
 /**
- * Annotation processor that discovers {@link AIImplemented} contract methods and
+ * Annotation processor that discovers {@link AIImplemented} contracts and
  * generates concrete implementations in generated sources.
  */
 public final class AimpProcessor extends AbstractProcessor {
@@ -126,38 +126,42 @@ public final class AimpProcessor extends AbstractProcessor {
             return true;
         }
 
-        Map<TypeElement, List<ExecutableElement>> methodsByContract = new LinkedHashMap<>();
+        Map<String, TypeElement> contractsByQualifiedName = new LinkedHashMap<>();
         for (Element element : roundEnv.getElementsAnnotatedWith(AIImplemented.class)) {
-            if (!(element instanceof ExecutableElement method)) {
-                error(element, "@AIImplemented can only be applied to methods.");
+            if (element instanceof TypeElement contractType) {
+                contractsByQualifiedName.putIfAbsent(contractType.getQualifiedName().toString(), contractType);
                 continue;
             }
-            if (!(method.getEnclosingElement() instanceof TypeElement contractType)) {
-                error(method, "@AIImplemented method must be declared inside an interface or abstract class.");
+            if (element instanceof ExecutableElement method) {
+                if (!(method.getEnclosingElement() instanceof TypeElement contractType)) {
+                    error(method, "@AIImplemented method must be declared inside an interface or abstract class.");
+                    continue;
+                }
+                contractsByQualifiedName.putIfAbsent(contractType.getQualifiedName().toString(), contractType);
                 continue;
             }
-            methodsByContract.computeIfAbsent(contractType, ignored -> new ArrayList<>()).add(method);
+            error(element, "@AIImplemented can only be applied to interfaces, abstract classes, or methods declared inside them.");
         }
 
-        if (methodsByContract.isEmpty()) {
+        if (contractsByQualifiedName.isEmpty()) {
             return true;
         }
 
-        for (Map.Entry<TypeElement, List<ExecutableElement>> entry : methodsByContract.entrySet()) {
-            ContractModel contract = buildContract(entry.getKey(), entry.getValue());
+        for (TypeElement contractType : contractsByQualifiedName.values()) {
+            ContractModel contract = buildContract(contractType);
             if (contract == null) {
                 continue;
             }
-            TypeContextResolver typeContextResolver = createTypeContextResolver(entry.getKey());
+            TypeContextResolver typeContextResolver = createTypeContextResolver(contractType);
 
             String generatedQualifiedName = GeneratedTypeNaming.generatedQualifiedName(contract.packageName(), contract.simpleName());
             String generatedSource = null;
 
             SqliteGeneratedImplementationStore implementationStore;
             try {
-                implementationStore = implementationStore(entry.getKey());
+                implementationStore = implementationStore(contractType);
             } catch (GeneratedImplementationStoreException exception) {
-                error(entry.getKey(), "Failed to open the AIMP implementation store: " + exception.getMessage());
+                error(contractType, "Failed to open the AIMP implementation store: " + exception.getMessage());
                 continue;
             }
 
@@ -165,14 +169,14 @@ public final class AimpProcessor extends AbstractProcessor {
             try {
                 storedImplementation = implementationStore.find(contract.qualifiedName(), contract.fingerprintHash()).orElse(null);
             } catch (GeneratedImplementationStoreException exception) {
-                error(entry.getKey(), "Failed to read the AIMP implementation store: " + exception.getMessage());
+                error(contractType, "Failed to read the AIMP implementation store: " + exception.getMessage());
                 continue;
             }
 
             if (storedImplementation != null) {
                 if (!generatedQualifiedName.equals(storedImplementation.generatedQualifiedName())) {
                     error(
-                        entry.getKey(),
+                        contractType,
                         "Stored generated implementation for "
                             + contract.qualifiedName()
                             + " fingerprint "
@@ -217,7 +221,7 @@ public final class AimpProcessor extends AbstractProcessor {
                 try {
                     synthesisResult = generatedClassSynthesizer.synthesize(contract, typeContextResolver);
                 } catch (MethodBodySynthesisException exception) {
-                    error(entry.getKey(), "Failed to synthesize generated class: " + exception.getMessage());
+                    error(contractType, "Failed to synthesize generated class: " + exception.getMessage());
                     continue;
                 }
                 generatedSource = synthesisResult.generatedSource();
@@ -231,7 +235,7 @@ public final class AimpProcessor extends AbstractProcessor {
                         toStoredContextDependencies(synthesisResult.usedReferencedTypes())
                     ));
                 } catch (GeneratedImplementationStoreException exception) {
-                    error(entry.getKey(), "Failed to persist the generated implementation: " + exception.getMessage());
+                    error(contractType, "Failed to persist the generated implementation: " + exception.getMessage());
                     continue;
                 }
 
@@ -249,7 +253,7 @@ public final class AimpProcessor extends AbstractProcessor {
             }
 
             try {
-                JavaFileObject sourceFile = processingEnv.getFiler().createSourceFile(generatedQualifiedName, entry.getKey());
+                JavaFileObject sourceFile = processingEnv.getFiler().createSourceFile(generatedQualifiedName, contractType);
                 try (Writer writer = sourceFile.openWriter()) {
                     writer.write(generatedSource);
                 }
@@ -257,7 +261,7 @@ public final class AimpProcessor extends AbstractProcessor {
             } catch (FilerException ignored) {
                 generatedTypeNames.add(generatedQualifiedName);
             } catch (IOException exception) {
-                error(entry.getKey(), "Failed to write generated source " + generatedQualifiedName + ": " + exception.getMessage());
+                error(contractType, "Failed to write generated source " + generatedQualifiedName + ": " + exception.getMessage());
             }
         }
 
@@ -367,7 +371,7 @@ public final class AimpProcessor extends AbstractProcessor {
         return List.copyOf(dependenciesByName.values());
     }
 
-    private ContractModel buildContract(TypeElement contractType, List<ExecutableElement> methods) {
+    private ContractModel buildContract(TypeElement contractType) {
         ContractKind contractKind = resolveContractKind(contractType);
         if (contractKind == null) {
             return null;
@@ -391,19 +395,19 @@ public final class AimpProcessor extends AbstractProcessor {
             return null;
         }
 
+        List<ExecutableElement> methods = collectAbstractContractMethods(contractType, contractKind);
+        if (methods.isEmpty()) {
+            error(contractType, "@AIImplemented contract must declare or inherit at least one abstract instance method.");
+            return null;
+        }
+
         List<MethodModel> methodModels = new ArrayList<>();
-        boolean valid = true;
         for (ExecutableElement method : methods) {
             MethodModel model = buildMethod(contractType, contractKind, method);
             if (model == null) {
-                valid = false;
-                continue;
+                return null;
             }
             methodModels.add(model);
-        }
-
-        if (!valid || methodModels.isEmpty()) {
-            return null;
         }
 
         List<ConstructorModel> constructors = contractKind == ContractKind.ABSTRACT_CLASS
@@ -453,8 +457,22 @@ public final class AimpProcessor extends AbstractProcessor {
         if (contractType.getKind() == ElementKind.CLASS && contractType.getModifiers().contains(Modifier.ABSTRACT)) {
             return ContractKind.ABSTRACT_CLASS;
         }
-        error(contractType, "@AIImplemented methods must be declared inside an interface or abstract class.");
+        error(contractType, "@AIImplemented can only be applied to an interface or abstract class.");
         return null;
+    }
+
+    private List<ExecutableElement> collectAbstractContractMethods(TypeElement contractType, ContractKind contractKind) {
+        LinkedHashMap<String, ExecutableElement> methodsBySignature = new LinkedHashMap<>();
+        String contractPackage = processingEnv.getElementUtils().getPackageOf(contractType).getQualifiedName().toString();
+
+        for (ExecutableElement method : ElementFilter.methodsIn(processingEnv.getElementUtils().getAllMembers(contractType))) {
+            if (!requiresGeneratedImplementation(contractType, contractKind, method, contractPackage)) {
+                continue;
+            }
+            methodsBySignature.putIfAbsent(methodSignatureKey(method), method);
+        }
+
+        return List.copyOf(methodsBySignature.values());
     }
 
     private List<ConstructorModel> buildConstructors(TypeElement contractType) {
@@ -495,29 +513,24 @@ public final class AimpProcessor extends AbstractProcessor {
     }
 
     private MethodModel buildMethod(TypeElement contractType, ContractKind contractKind, ExecutableElement method) {
-        AIImplemented annotation = method.getAnnotation(AIImplemented.class);
-        String description = annotation == null ? "" : annotation.value().trim();
-        if (description.isBlank()) {
-            error(method, "@AIImplemented value must not be blank.");
-            return null;
-        }
-
         Set<Modifier> modifiers = method.getModifiers();
         if (modifiers.contains(Modifier.STATIC)) {
-            error(method, "@AIImplemented does not support static methods.");
+            error(method, "AIMP does not support static methods.");
             return null;
         }
         if (modifiers.contains(Modifier.PRIVATE)) {
-            error(method, "@AIImplemented does not support private methods.");
+            error(method, "AIMP does not support private methods.");
             return null;
         }
         if (modifiers.contains(Modifier.DEFAULT)) {
-            error(method, "@AIImplemented does not support default interface methods in v1.");
+            error(method, "AIMP does not support default interface methods in v1.");
             return null;
         }
 
-        if (contractKind == ContractKind.ABSTRACT_CLASS && !modifiers.contains(Modifier.ABSTRACT)) {
-            error(method, "@AIImplemented does not support concrete methods.");
+        boolean abstractMethod = modifiers.contains(Modifier.ABSTRACT)
+            || method.getEnclosingElement().getKind() == ElementKind.INTERFACE;
+        if (!abstractMethod) {
+            error(method, "AIMP only generates implementations for abstract instance methods.");
             return null;
         }
 
@@ -529,9 +542,52 @@ public final class AimpProcessor extends AbstractProcessor {
             toTypeParameters(method),
             toParameters(method),
             method.getThrownTypes().stream().map(this::renderType).toList(),
-            extractAnnotations(method.getAnnotationMirrors()),
-            description
+            extractAnnotations(method.getAnnotationMirrors())
         );
+    }
+
+    private boolean requiresGeneratedImplementation(
+        TypeElement contractType,
+        ContractKind contractKind,
+        ExecutableElement method,
+        String contractPackage
+    ) {
+        Set<Modifier> modifiers = method.getModifiers();
+        if (modifiers.contains(Modifier.STATIC) || modifiers.contains(Modifier.PRIVATE) || modifiers.contains(Modifier.DEFAULT)) {
+            return false;
+        }
+
+        if (!(method.getEnclosingElement() instanceof TypeElement declaringType)) {
+            return false;
+        }
+
+        if (declaringType.getQualifiedName().contentEquals(Object.class.getCanonicalName())) {
+            return false;
+        }
+
+        String declaringPackage = processingEnv.getElementUtils().getPackageOf(declaringType).getQualifiedName().toString();
+        if (!isAccessibleFromGeneratedType(method, declaringType.equals(contractType), contractPackage, declaringPackage)) {
+            return false;
+        }
+
+        if (declaringType.getKind() == ElementKind.INTERFACE) {
+            return true;
+        }
+
+        return modifiers.contains(Modifier.ABSTRACT);
+    }
+
+    private String methodSignatureKey(ExecutableElement method) {
+        StringBuilder signature = new StringBuilder(method.getSimpleName().toString()).append('(');
+        List<? extends VariableElement> parameters = method.getParameters();
+        for (int index = 0; index < parameters.size(); index++) {
+            if (index > 0) {
+                signature.append(',');
+            }
+            signature.append(processingEnv.getTypeUtils().erasure(parameters.get(index).asType()));
+        }
+        signature.append(')');
+        return signature.toString();
     }
 
     private List<TypeParameterModel> toTypeParameters(Parameterizable parameterizable) {
@@ -883,7 +939,35 @@ public final class AimpProcessor extends AbstractProcessor {
         if (start < 0 || end < 0 || end < start || end > fullSource.length()) {
             return "";
         }
-        return fullSource.substring((int) start, (int) end).trim();
+        int declarationStart = (int) start;
+        int fingerprintStart = includeLeadingTypeJavadoc(fullSource, declarationStart);
+        return fullSource.substring(fingerprintStart, (int) end).trim();
+    }
+
+    private int includeLeadingTypeJavadoc(String fullSource, int declarationStart) {
+        int scan = declarationStart;
+        while (scan > 0 && Character.isWhitespace(fullSource.charAt(scan - 1))) {
+            scan--;
+        }
+
+        if (scan < 2 || fullSource.charAt(scan - 2) != '*' || fullSource.charAt(scan - 1) != '/') {
+            return declarationStart;
+        }
+
+        int commentStart = fullSource.lastIndexOf("/*", scan - 2);
+        if (commentStart < 0) {
+            return declarationStart;
+        }
+        if (commentStart + 2 >= fullSource.length() || fullSource.charAt(commentStart + 2) != '*') {
+            return declarationStart;
+        }
+
+        int commentEnd = fullSource.indexOf("*/", commentStart);
+        if (commentEnd < 0 || commentEnd + 2 != scan) {
+            return declarationStart;
+        }
+
+        return commentStart;
     }
 
     private String extractCompilationUnitSourceForPath(TreePath path) {

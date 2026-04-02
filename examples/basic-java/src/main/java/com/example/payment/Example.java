@@ -5,17 +5,16 @@ import com.aimp.annotations.AIImplemented;
 /**
  * Small example contract used to demonstrate full-class AIMP generation.
  */
+@AIImplemented
 public interface Example {
     /**
      * Produces a payment result for the example scenario.
+     * The generated implementation should repeat the word {@code hello} exactly
+     * ten times separated by a single space, compute the sum of the integers
+     * from 1 through 10, and return
+     * {@code new PaymentResult(greetingText + " | sum=55")}.
      *
      * @return synthesized payment result
      */
-    @AIImplemented("""
-        Build a status string without using external systems.
-        Repeat the word "hello" exactly 10 times, separated by a single space.
-        Compute the sum of the integers from 1 through 10, which is 55.
-        Return exactly new com.example.payment.PaymentResult(greetingText + " | sum=55").
-        """)
     PaymentResult m1();
 }

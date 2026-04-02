@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Example abstract contract that demonstrates annotation propagation.
  */
+@AIImplemented
 @Service
 public abstract class OrderServiceBase {
     /**
@@ -19,17 +20,14 @@ public abstract class OrderServiceBase {
     }
 
     /**
-     * Places an order request.
+     * Places an order request without calling external systems.
+     * The generated implementation should use {@code request.id()} as the order
+     * identifier and return
+     * {@code new OrderResult("reserved:" + request.id())}.
      *
      * @param request order request to place
      * @return order placement result
      */
-    @AIImplemented("""
-        Implement this method without calling external systems.
-        Use request.id() as the order identifier.
-        Return exactly new com.example.order.OrderResult("reserved:" + request.id()).
-        Do not introduce any extra dependencies or infrastructure.
-        """)
     @Transactional
     public abstract OrderResult place(@Valid OrderRequest request);
 }

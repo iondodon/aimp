@@ -113,7 +113,7 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
                 + contractQualifiedName
                 + " after exhausting the maximum of "
                 + maxSynthesisRounds
-                + " synthesis rounds. Add more context to @AIImplemented(\"...\") or the contract code."
+                + " synthesis rounds. Add more context to the contract code, Javadocs, or related source types."
         );
     }
 
@@ -142,7 +142,7 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
                     + contract.qualifiedName()
                     + " after reaching the maximum of "
                     + maxSynthesisRounds
-                    + " synthesis rounds. Add more context to @AIImplemented(\"...\") or the contract code."
+                    + " synthesis rounds. Add more context to the contract code, Javadocs, or related source types."
             );
         }
 
