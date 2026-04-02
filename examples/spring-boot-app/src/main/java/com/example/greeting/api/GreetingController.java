@@ -1,6 +1,5 @@
 package com.example.greeting.api;
 
-import com.aimp.annotations.AIContract;
 import com.aimp.annotations.AIImplemented;
 import com.example.greeting.service.GreetingRequest;
 import com.example.greeting.service.GreetingResponse;
@@ -16,7 +15,6 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/greetings")
-@AIContract(version = "2")
 public abstract class GreetingController {
     /**
      * Injected greeting service used by generated controller implementations.

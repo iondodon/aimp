@@ -30,7 +30,7 @@ class GeneratedClassSynthesisPromptFactoryTest {
             "com.example.payment",
             "PaymentService",
             "com.example.payment.PaymentService",
-            "7",
+            "abc123",
             ContractKind.INTERFACE,
             Visibility.PUBLIC,
             """
@@ -55,7 +55,8 @@ class GeneratedClassSynthesisPromptFactoryTest {
                 new ReferencedTypeModel(
                     "com.example.payment.PaymentRequest",
                     "public record PaymentRequest(String reference) {\n}",
-                    2
+                    2,
+                    "dep123"
                 )
             ),
             new ContextRequestFeedback(
@@ -76,7 +77,7 @@ class GeneratedClassSynthesisPromptFactoryTest {
         assertEquals(2, root.path("round").path("current").asInt());
         assertEquals(3, root.path("round").path("max").asInt());
         assertEquals("PaymentService_AIGenerated", root.path("generationTarget").path("generatedSimpleName").asText());
-        assertEquals("7", root.path("generationTarget").path("contractVersion").asText());
+        assertTrue(root.path("generationTarget").path("contractVersion").isMissingNode());
         assertEquals("implement", root.path("generationTarget").path("relationship").asText());
         assertEquals(
             List.of("generated_class", "request_context_types"),
@@ -127,7 +128,7 @@ class GeneratedClassSynthesisPromptFactoryTest {
             "com.example.payment",
             "PaymentService",
             "com.example.payment.PaymentService",
-            "1",
+            "abc123",
             ContractKind.INTERFACE,
             Visibility.PUBLIC,
             "package com.example.payment;\n\npublic interface PaymentService {}",

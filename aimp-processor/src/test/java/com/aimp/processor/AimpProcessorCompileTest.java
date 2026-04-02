@@ -163,7 +163,7 @@ class AimpProcessorCompileTest {
     }
 
     @Test
-    void reusesPersistedImplementationForSameContractVersionWithoutCallingOpenAiAgain() throws Exception {
+    void reusesPersistedImplementationForSameContractHashWithoutCallingOpenAiAgain() throws Exception {
         Path projectDirectory = tempDir.resolve("persisted-project");
         AtomicInteger requestCount = new AtomicInteger();
 
@@ -187,10 +187,8 @@ class AimpProcessorCompileTest {
                 paymentContractSources("""
                     package com.example.payment;
 
-                    import com.aimp.annotations.AIContract;
                     import com.aimp.annotations.AIImplemented;
 
-                    @AIContract(version = "1")
                     public interface PaymentService {
                         @AIImplemented("Charge a payment and return the result")
                         PaymentResult charge(PaymentRequest request);
@@ -210,10 +208,8 @@ class AimpProcessorCompileTest {
             paymentContractSources("""
                 package com.example.payment;
 
-                import com.aimp.annotations.AIContract;
                 import com.aimp.annotations.AIImplemented;
 
-                @AIContract(version = "1")
                 public interface PaymentService {
                     @AIImplemented("Charge a payment and return the result")
                     PaymentResult charge(PaymentRequest request);
@@ -226,7 +222,7 @@ class AimpProcessorCompileTest {
         assertTrue(
             secondResult.messages(Diagnostic.Kind.NOTE).stream()
                 .anyMatch(message -> message.contains(
-                    "AIMP reused persisted implementation for contract com.example.payment.PaymentService version 1"
+                    "AIMP reused persisted implementation for contract com.example.payment.PaymentService fingerprint"
                 ))
         );
         assertTrue(secondResult.generatedSource("com/example/payment/PaymentService_AIGenerated.java")
@@ -234,18 +230,15 @@ class AimpProcessorCompileTest {
     }
 
     @Test
-    void contractVersionChangeTriggersNewOpenAiGeneration() throws Exception {
-        Path projectDirectory = tempDir.resolve("version-project");
+    void contractHashChangeTriggersNewOpenAiGeneration() throws Exception {
+        Path projectDirectory = tempDir.resolve("hash-project");
         AtomicInteger requestCount = new AtomicInteger();
 
         try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
             int invocation = requestCount.incrementAndGet();
             String generatedValue = invocation == 1 ? "approved-v1" : "approved-v2";
             JsonNode inputJson = requestInputJson(request);
-            assertEquals(
-                Integer.toString(invocation),
-                inputJson.path("generationTarget").path("contractVersion").asText()
-            );
+            assertTrue(inputJson.path("generationTarget").path("contractVersion").isMissingNode());
             return openAiOutputText(openAiGeneratedClassResponse("""
                 package com.example.payment;
 
@@ -260,7 +253,7 @@ class AimpProcessorCompileTest {
             CompilationResult firstResult = ProcessorCompilation.compile(
                 projectDirectory,
                 new AimpProcessor(),
-                paymentContractSources(paymentServiceWithVersion("1")),
+                paymentContractSources(paymentServiceWithDescription("Charge a payment and return the result")),
                 Map.of(),
                 server.processorOptions()
             );
@@ -269,7 +262,7 @@ class AimpProcessorCompileTest {
             CompilationResult secondResult = ProcessorCompilation.compile(
                 projectDirectory,
                 new AimpProcessor(),
-                paymentContractSources(paymentServiceWithVersion("2")),
+                paymentContractSources(paymentServiceWithDescription("Charge a payment, validate the reference, and return the result")),
                 Map.of(),
                 server.processorOptions()
             );
@@ -279,6 +272,72 @@ class AimpProcessorCompileTest {
         }
 
         assertEquals(2, requestCount.get());
+    }
+
+    @Test
+    void dependencyHashChangeTriggersNewOpenAiGeneration() throws Exception {
+        Path projectDirectory = tempDir.resolve("dependency-project");
+        AtomicInteger requestCount = new AtomicInteger();
+
+        try (FakeOpenAiServer server = FakeOpenAiServer.start(request -> {
+            JsonNode inputJson = requestInputJson(request);
+            int invocation = requestCount.incrementAndGet();
+            if (invocation == 1 || invocation == 3) {
+                assertEquals(0, inputJson.path("includedTypeContexts").size());
+                return openAiOutputText(openAiRequestContextTypesResponse(List.of("com.example.payment.PaymentResult")));
+            }
+
+            String paymentResultSource = inputJson.path("includedTypeContexts").get(0).path("source").asText();
+            String generatedValue = paymentResultSource.contains("String outcome") ? "approved-v2" : "approved-v1";
+            return openAiOutputText(openAiGeneratedClassResponse("""
+                package com.example.payment;
+
+                public class PaymentService_AIGenerated implements PaymentService {
+                    @Override
+                    public com.example.payment.PaymentResult charge(com.example.payment.PaymentRequest request) {
+                        return new com.example.payment.PaymentResult("%s");
+                    }
+                }
+                """.formatted(generatedValue)));
+        })) {
+            CompilationResult firstResult = ProcessorCompilation.compile(
+                projectDirectory,
+                new AimpProcessor(),
+                paymentContractSources(
+                    paymentServiceWithDescription("Charge a payment and return the result"),
+                    """
+                    package com.example.payment;
+
+                    public record PaymentResult(String status) {
+                    }
+                    """
+                ),
+                Map.of(),
+                server.processorOptions()
+            );
+            assertTrue(firstResult.success(), () -> String.join("\n", firstResult.messages(Diagnostic.Kind.ERROR)));
+
+            CompilationResult secondResult = ProcessorCompilation.compile(
+                projectDirectory,
+                new AimpProcessor(),
+                paymentContractSources(
+                    paymentServiceWithDescription("Charge a payment and return the result"),
+                    """
+                    package com.example.payment;
+
+                    public record PaymentResult(String outcome) {
+                    }
+                    """
+                ),
+                Map.of(),
+                server.processorOptions()
+            );
+            assertTrue(secondResult.success(), () -> String.join("\n", secondResult.messages(Diagnostic.Kind.ERROR)));
+            assertTrue(secondResult.generatedSource("com/example/payment/PaymentService_AIGenerated.java")
+                .contains("approved-v2"));
+        }
+
+        assertEquals(4, requestCount.get());
     }
 
     @Test
@@ -852,6 +911,18 @@ class AimpProcessorCompileTest {
     }
 
     private static List<SourceFile> paymentContractSources(String paymentServiceSource) {
+        return paymentContractSources(
+            paymentServiceSource,
+            """
+            package com.example.payment;
+
+            public record PaymentResult(String status) {
+            }
+            """
+        );
+    }
+
+    private static List<SourceFile> paymentContractSources(String paymentServiceSource, String paymentResultSource) {
         return List.of(
             SourceFile.of("com/example/payment/PaymentRequest.java", """
                 package com.example.payment;
@@ -859,29 +930,22 @@ class AimpProcessorCompileTest {
                 public record PaymentRequest(String reference) {
                 }
                 """),
-            SourceFile.of("com/example/payment/PaymentResult.java", """
-                package com.example.payment;
-
-                public record PaymentResult(String status) {
-                }
-                """),
+            SourceFile.of("com/example/payment/PaymentResult.java", paymentResultSource),
             SourceFile.of("com/example/payment/PaymentService.java", paymentServiceSource)
         );
     }
 
-    private static String paymentServiceWithVersion(String version) {
+    private static String paymentServiceWithDescription(String description) {
         return """
             package com.example.payment;
 
-            import com.aimp.annotations.AIContract;
             import com.aimp.annotations.AIImplemented;
 
-            @AIContract(version = "%s")
             public interface PaymentService {
-                @AIImplemented("Charge a payment and return the result")
+                @AIImplemented("%s")
                 PaymentResult charge(PaymentRequest request);
             }
-            """.formatted(version);
+            """.formatted(description);
     }
 
     private record OpenAiRequest(String authorization, String body) {

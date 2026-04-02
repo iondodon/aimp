@@ -36,7 +36,6 @@ final class GeneratedClassSourceSanitizer {
         validateClassName(contract, sanitized);
         validateInheritance(contract, sanitized);
         validateNoAiImplemented(sanitized);
-        validateNoAiContract(sanitized);
         return sanitized + System.lineSeparator();
     }
 
@@ -191,18 +190,10 @@ final class GeneratedClassSourceSanitizer {
         }
     }
 
-    private static void validateNoAiContract(String source) {
-        if (containsAiContractAnnotation(source)) {
-            throw new MethodBodySynthesisException("OpenAI synthesis returned source that still contains @AIContract.");
-        }
-    }
-
     private static String stripAiImplementedImport(String source) {
         return source
             .replace("import com.aimp.annotations.AIImplemented;\r\n", "")
-            .replace("import com.aimp.annotations.AIImplemented;\n", "")
-            .replace("import com.aimp.annotations.AIContract;\r\n", "")
-            .replace("import com.aimp.annotations.AIContract;\n", "");
+            .replace("import com.aimp.annotations.AIImplemented;\n", "");
     }
 
     private static String stripAimpAnnotations(String source) {
@@ -248,14 +239,6 @@ final class GeneratedClassSourceSanitizer {
                 index = skipAnnotation(source, index + "@com.aimp.annotations.AIImplemented".length());
                 continue;
             }
-            if (source.startsWith("@AIContract", index)) {
-                index = skipAnnotation(source, index + "@AIContract".length());
-                continue;
-            }
-            if (source.startsWith("@com.aimp.annotations.AIContract", index)) {
-                index = skipAnnotation(source, index + "@com.aimp.annotations.AIContract".length());
-                continue;
-            }
             builder.append(source.charAt(index));
             index++;
         }
@@ -287,39 +270,6 @@ final class GeneratedClassSourceSanitizer {
                 continue;
             }
             if (source.startsWith("@AIImplemented", index) || source.startsWith("@com.aimp.annotations.AIImplemented", index)) {
-                return true;
-            }
-            index++;
-        }
-        return false;
-    }
-
-    private static boolean containsAiContractAnnotation(String source) {
-        int index = 0;
-        while (index < source.length()) {
-            if (source.startsWith("\"\"\"", index)) {
-                index = skipTextBlock(source, index + 3);
-                continue;
-            }
-            if (source.startsWith("//", index)) {
-                index = skipLineComment(source, index + 2);
-                continue;
-            }
-            if (source.startsWith("/*", index)) {
-                index = skipBlockComment(source, index + 2);
-                continue;
-            }
-            char current = source.charAt(index);
-            if (current == '"') {
-                index = skipQuotedLiteral(source, index + 1, '"');
-                continue;
-            }
-            if (current == '\'') {
-                index = skipQuotedLiteral(source, index + 1, '\'');
-                continue;
-            }
-            if (source.startsWith("@AIContract", index)
-                || source.startsWith("@com.aimp.annotations.AIContract", index)) {
                 return true;
             }
             index++;

@@ -1,6 +1,5 @@
 package com.example.order;
 
-import com.aimp.annotations.AIContract;
 import com.aimp.annotations.AIImplemented;
 import jakarta.validation.Valid;
 import org.springframework.stereotype.Service;
@@ -9,7 +8,6 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Example abstract contract that demonstrates annotation propagation.
  */
-@AIContract(version = "1")
 @Service
 public abstract class OrderServiceBase {
     /**

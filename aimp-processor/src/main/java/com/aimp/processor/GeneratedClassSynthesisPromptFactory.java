@@ -43,7 +43,6 @@ final class GeneratedClassSynthesisPromptFactory {
         generationTarget.put("relationship", contract.kind() == ContractKind.INTERFACE ? "implement" : "extend");
         generationTarget.put("contractKind", contract.kind().name());
         generationTarget.put("contractQualifiedName", contract.qualifiedName());
-        generationTarget.put("contractVersion", contract.version());
 
         ObjectNode responseContract = root.putObject("responseContract");
         responseContract.put("protocolVersion", GeneratedClassSynthesisProtocol.PROTOCOL_VERSION);
@@ -76,7 +75,6 @@ final class GeneratedClassSynthesisPromptFactory {
                 "Return exactly one JSON object and nothing else.",
                 "Do not return markdown or code fences.",
                 "Do not include @AIImplemented anywhere in generatedClassSource.",
-                "Do not include @AIContract anywhere in generatedClassSource.",
                 "Generate a concrete, non-final class for the requested generatedSimpleName.",
                 "generatedClassSource must compile as a standalone Java source file in the target package.",
                 "For types outside java.lang and outside the generated package, add the required imports or use fully qualified names.",

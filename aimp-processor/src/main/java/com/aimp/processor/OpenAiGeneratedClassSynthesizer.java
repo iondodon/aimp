@@ -48,7 +48,7 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
     }
 
     @Override
-    public String synthesize(ContractModel contract, TypeContextResolver typeContextResolver) {
+    public GeneratedClassSynthesisResult synthesize(ContractModel contract, TypeContextResolver typeContextResolver) {
         String contractQualifiedName = contract.qualifiedName();
         String generatedQualifiedName = GeneratedTypeNaming.generatedQualifiedName(contract.packageName(), contract.simpleName());
         String logTarget = "contract " + contractQualifiedName + " -> generated type " + generatedQualifiedName;
@@ -97,7 +97,12 @@ final class OpenAiGeneratedClassSynthesizer implements GeneratedClassSynthesizer
                     );
                 }
                 case GeneratedClassSynthesisProtocol.RESPONSE_TYPE_GENERATED_CLASS ->
-                    { return GeneratedClassSourceSanitizer.sanitize(synthesisResponse.generatedClassSource(), contract); }
+                    {
+                        return new GeneratedClassSynthesisResult(
+                            GeneratedClassSourceSanitizer.sanitize(synthesisResponse.generatedClassSource(), contract),
+                            List.copyOf(includedTypesByName.values())
+                        );
+                    }
                 default -> throw new MethodBodySynthesisException(
                     "OpenAI synthesis response used unsupported responseType '" + synthesisResponse.responseType() + "'."
                 );

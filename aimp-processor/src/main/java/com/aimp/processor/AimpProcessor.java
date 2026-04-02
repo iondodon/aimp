@@ -3,7 +3,6 @@ package com.aimp.processor;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
-import com.aimp.annotations.AIContract;
 import com.aimp.annotations.AIImplemented;
 import com.aimp.core.GeneratedTypeNaming;
 import com.aimp.model.AnnotationUsage;
@@ -13,6 +12,7 @@ import com.aimp.model.ContractModel;
 import com.aimp.model.GeneratedElementKind;
 import com.aimp.model.MethodModel;
 import com.aimp.model.ParameterModel;
+import com.aimp.model.ReferencedTypeModel;
 import com.aimp.model.TypeParameterModel;
 import com.aimp.model.Visibility;
 import java.io.IOException;
@@ -110,7 +110,7 @@ public final class AimpProcessor extends AbstractProcessor {
 
     @Override
     public Set<String> getSupportedAnnotationTypes() {
-        return Set.of(AIImplemented.class.getCanonicalName(), AIContract.class.getCanonicalName());
+        return Set.of(AIImplemented.class.getCanonicalName());
     }
 
     @Override
@@ -146,9 +146,10 @@ public final class AimpProcessor extends AbstractProcessor {
             if (contract == null) {
                 continue;
             }
+            TypeContextResolver typeContextResolver = createTypeContextResolver(entry.getKey());
 
             String generatedQualifiedName = GeneratedTypeNaming.generatedQualifiedName(contract.packageName(), contract.simpleName());
-            String generatedSource;
+            String generatedSource = null;
 
             SqliteGeneratedImplementationStore implementationStore;
             try {
@@ -160,7 +161,7 @@ public final class AimpProcessor extends AbstractProcessor {
 
             StoredGeneratedImplementation storedImplementation;
             try {
-                storedImplementation = implementationStore.find(contract.qualifiedName(), contract.version()).orElse(null);
+                storedImplementation = implementationStore.find(contract.qualifiedName(), contract.fingerprintHash()).orElse(null);
             } catch (GeneratedImplementationStoreException exception) {
                 error(entry.getKey(), "Failed to read the AIMP implementation store: " + exception.getMessage());
                 continue;
@@ -172,8 +173,8 @@ public final class AimpProcessor extends AbstractProcessor {
                         entry.getKey(),
                         "Stored generated implementation for "
                             + contract.qualifiedName()
-                            + " version "
-                            + contract.version()
+                            + " fingerprint "
+                            + shortHash(contract.fingerprintHash())
                             + " targets "
                             + storedImplementation.generatedQualifiedName()
                             + " instead of "
@@ -182,30 +183,49 @@ public final class AimpProcessor extends AbstractProcessor {
                     );
                     continue;
                 }
-                generatedSource = storedImplementation.generatedSource();
-                note(
-                    "AIMP reused persisted implementation for contract "
-                        + contract.qualifiedName()
-                        + " version "
-                        + contract.version()
-                );
-            } else {
+                StoredDependencyValidation validation = validateStoredDependencies(typeContextResolver, storedImplementation);
+                if (validation.valid()) {
+                    generatedSource = storedImplementation.generatedSource();
+                    note(
+                        "AIMP reused persisted implementation for contract "
+                            + contract.qualifiedName()
+                            + " fingerprint "
+                            + shortHash(contract.fingerprintHash())
+                    );
+                } else {
+                    note(
+                        "AIMP ignored stale persisted implementation for contract "
+                            + contract.qualifiedName()
+                            + " fingerprint "
+                            + shortHash(contract.fingerprintHash())
+                            + " because "
+                            + validation.reason()
+                    );
+                    storedImplementation = null;
+                    generatedSource = null;
+                }
+            }
+
+            if (storedImplementation == null) {
                 if (!ensureGeneratedClassSynthesizer()) {
                     return true;
                 }
+                GeneratedClassSynthesisResult synthesisResult;
                 try {
-                    generatedSource = generatedClassSynthesizer.synthesize(contract, createTypeContextResolver(entry.getKey()));
+                    synthesisResult = generatedClassSynthesizer.synthesize(contract, typeContextResolver);
                 } catch (MethodBodySynthesisException exception) {
                     error(entry.getKey(), "Failed to synthesize generated class: " + exception.getMessage());
                     continue;
                 }
+                generatedSource = synthesisResult.generatedSource();
 
                 try {
                     implementationStore.save(new StoredGeneratedImplementation(
                         contract.qualifiedName(),
-                        contract.version(),
+                        contract.fingerprintHash(),
                         generatedQualifiedName,
-                        generatedSource
+                        generatedSource,
+                        toStoredContextDependencies(synthesisResult.usedReferencedTypes())
                     ));
                 } catch (GeneratedImplementationStoreException exception) {
                     error(entry.getKey(), "Failed to persist the generated implementation: " + exception.getMessage());
@@ -215,8 +235,8 @@ public final class AimpProcessor extends AbstractProcessor {
                 note(
                     "AIMP stored generated implementation for contract "
                         + contract.qualifiedName()
-                        + " version "
-                        + contract.version()
+                        + " fingerprint "
+                        + shortHash(contract.fingerprintHash())
                 );
             }
 
@@ -305,6 +325,40 @@ public final class AimpProcessor extends AbstractProcessor {
         return new JavacTypeContextResolver(contractType);
     }
 
+    private StoredDependencyValidation validateStoredDependencies(
+        TypeContextResolver typeContextResolver,
+        StoredGeneratedImplementation storedImplementation
+    ) {
+        for (StoredContextDependency dependency : storedImplementation.contextDependencies()) {
+            TypeContextResolution resolution = typeContextResolver.resolve(List.of(dependency.qualifiedName()), Set.of(), 1);
+            if (resolution.fulfilledTypes().isEmpty()) {
+                return new StoredDependencyValidation(
+                    false,
+                    "context type " + dependency.qualifiedName() + " is no longer available"
+                );
+            }
+            String currentHash = resolution.fulfilledTypes().getFirst().fingerprintHash();
+            if (!currentHash.equals(dependency.fingerprintHash())) {
+                return new StoredDependencyValidation(
+                    false,
+                    "context type " + dependency.qualifiedName() + " changed"
+                );
+            }
+        }
+        return new StoredDependencyValidation(true, "");
+    }
+
+    private List<StoredContextDependency> toStoredContextDependencies(List<ReferencedTypeModel> usedReferencedTypes) {
+        LinkedHashMap<String, StoredContextDependency> dependenciesByName = new LinkedHashMap<>();
+        for (ReferencedTypeModel referencedType : usedReferencedTypes) {
+            dependenciesByName.putIfAbsent(
+                referencedType.qualifiedName(),
+                new StoredContextDependency(referencedType.qualifiedName(), referencedType.fingerprintHash())
+            );
+        }
+        return List.copyOf(dependenciesByName.values());
+    }
+
     private ContractModel buildContract(TypeElement contractType, List<ExecutableElement> methods) {
         ContractKind contractKind = resolveContractKind(contractType);
         if (contractKind == null) {
@@ -351,38 +405,37 @@ public final class AimpProcessor extends AbstractProcessor {
             return null;
         }
 
-        String contractVersion = contractVersion(contractType);
-        if (contractVersion == null) {
-            return null;
+        String sourceSnippet = extractContractSourceSnippet(contractType);
+        String fingerprintSource = extractContractFingerprintSource(contractType);
+        if (fingerprintSource.isBlank()) {
+            fingerprintSource = sourceSnippet;
+        }
+        if (fingerprintSource.isBlank()) {
+            fingerprintSource = renderContractFingerprintFallback(
+                packageName,
+                contractType.getSimpleName().toString(),
+                contractKind,
+                visibilityOf(contractType),
+                toTypeParameters(contractType),
+                extractAnnotations(contractType.getAnnotationMirrors()),
+                constructors,
+                methodModels
+            );
         }
 
         return new ContractModel(
             packageName,
             contractType.getSimpleName().toString(),
             contractType.getQualifiedName().toString(),
-            contractVersion,
+            SourceFingerprinting.sha256(fingerprintSource),
             contractKind,
             visibilityOf(contractType),
-            extractContractSourceSnippet(contractType),
+            sourceSnippet,
             toTypeParameters(contractType),
             extractAnnotations(contractType.getAnnotationMirrors()),
             constructors,
             methodModels
         );
-    }
-
-    private String contractVersion(TypeElement contractType) {
-        AIContract contractAnnotation = contractType.getAnnotation(AIContract.class);
-        if (contractAnnotation == null) {
-            return "1";
-        }
-
-        String version = trimToNull(contractAnnotation.version());
-        if (version == null) {
-            error(contractType, "@AIContract version must not be blank.");
-            return null;
-        }
-        return version;
     }
 
     private ContractKind resolveContractKind(TypeElement contractType) {
@@ -661,8 +714,7 @@ public final class AimpProcessor extends AbstractProcessor {
     private AnnotationUsage toAnnotationUsage(AnnotationMirror mirror) {
         TypeElement annotationType = (TypeElement) mirror.getAnnotationType().asElement();
         String annotationName = annotationType.getQualifiedName().toString();
-        if (annotationName.equals(AIImplemented.class.getCanonicalName())
-            || annotationName.equals(AIContract.class.getCanonicalName())) {
+        if (annotationName.equals(AIImplemented.class.getCanonicalName())) {
             return null;
         }
         return new AnnotationUsage(annotationName, renderAnnotation(mirror, annotationType), resolveTargets(annotationType));
@@ -736,6 +788,10 @@ public final class AimpProcessor extends AbstractProcessor {
         return extractCompilationUnitSource(contractType);
     }
 
+    private String extractContractFingerprintSource(TypeElement contractType) {
+        return extractFingerprintSource(contractType);
+    }
+
     private String extractTypeSourceSnippet(TypeElement typeElement) {
         if (trees == null) {
             return "";
@@ -762,6 +818,163 @@ public final class AimpProcessor extends AbstractProcessor {
 
     private String extractCompilationUnitSource(TypeElement typeElement) {
         return extractTypeSourceSnippet(typeElement);
+    }
+
+    private String extractFingerprintSource(TypeElement typeElement) {
+        if (trees == null) {
+            return "";
+        }
+
+        TreePath path = trees.getPath(typeElement);
+        if (path == null) {
+            return "";
+        }
+
+        CompilationUnitTree compilationUnit = path.getCompilationUnit();
+        if (compilationUnit == null) {
+            return "";
+        }
+
+        String declarationSource = extractTypeDeclarationSource(path, compilationUnit);
+        if (declarationSource.isBlank()) {
+            return "";
+        }
+
+        StringBuilder builder = new StringBuilder();
+        if (compilationUnit.getPackageName() != null) {
+            builder.append("package ").append(compilationUnit.getPackageName()).append(";\n\n");
+        }
+        boolean wroteImport = false;
+        for (var importTree : compilationUnit.getImports()) {
+            String renderedImport = importTree.toString().trim();
+            builder.append(renderedImport);
+            if (!renderedImport.endsWith("\n")) {
+                builder.append('\n');
+            }
+            wroteImport = true;
+        }
+        if (wroteImport) {
+            builder.append('\n');
+        }
+        builder.append(declarationSource.trim());
+        return builder.toString().trim();
+    }
+
+    private String extractTypeDeclarationSource(TreePath path, CompilationUnitTree compilationUnit) {
+        if (compilationUnit.getSourceFile() == null) {
+            return "";
+        }
+
+        String fullSource = extractCompilationUnitSourceForPath(path);
+        if (fullSource.isBlank()) {
+            return "";
+        }
+
+        long start = trees.getSourcePositions().getStartPosition(compilationUnit, path.getLeaf());
+        long end = trees.getSourcePositions().getEndPosition(compilationUnit, path.getLeaf());
+        if (start < 0 || end < 0 || end < start || end > fullSource.length()) {
+            return "";
+        }
+        return fullSource.substring((int) start, (int) end).trim();
+    }
+
+    private String extractCompilationUnitSourceForPath(TreePath path) {
+        CompilationUnitTree compilationUnit = path.getCompilationUnit();
+        if (compilationUnit == null || compilationUnit.getSourceFile() == null) {
+            return "";
+        }
+        try (Reader reader = compilationUnit.getSourceFile().openReader(true)) {
+            StringWriter writer = new StringWriter();
+            reader.transferTo(writer);
+            return writer.toString();
+        } catch (IOException ignored) {
+            return "";
+        }
+    }
+
+    private String renderContractFingerprintFallback(
+        String packageName,
+        String simpleName,
+        ContractKind contractKind,
+        Visibility visibility,
+        List<TypeParameterModel> typeParameters,
+        List<AnnotationUsage> annotations,
+        List<ConstructorModel> constructors,
+        List<MethodModel> methods
+    ) {
+        StringBuilder builder = new StringBuilder();
+        if (!packageName.isBlank()) {
+            builder.append("package ").append(packageName).append(";\n\n");
+        }
+        annotations.forEach(annotation -> builder.append(annotation.renderedSource()).append('\n'));
+        builder.append(renderVisibility(visibility));
+        builder.append(contractKind == ContractKind.INTERFACE ? "interface " : "abstract class ");
+        builder.append(simpleName);
+        builder.append(renderTypeParameters(typeParameters));
+        builder.append(" {\n");
+        for (ConstructorModel constructor : constructors) {
+            builder.append("    ")
+                .append(renderVisibility(constructor.visibility()))
+                .append(simpleName)
+                .append(renderParameters(constructor.parameters()))
+                .append(renderThrows(constructor.thrownTypes()))
+                .append(";\n");
+        }
+        for (MethodModel method : methods) {
+            method.annotations().forEach(annotation -> builder.append("    ").append(annotation.renderedSource()).append('\n'));
+            builder.append("    ")
+                .append(renderVisibility(method.visibility()))
+                .append(renderTypeParameters(method.typeParameters()));
+            if (!method.typeParameters().isEmpty()) {
+                builder.append(' ');
+            }
+            builder.append(method.returnType())
+                .append(' ')
+                .append(method.name())
+                .append(renderParameters(method.parameters()))
+                .append(renderThrows(method.thrownTypes()))
+                .append(";\n");
+        }
+        builder.append('}');
+        return builder.toString();
+    }
+
+    private String renderVisibility(Visibility visibility) {
+        return visibility.keyword().isBlank() ? "" : visibility.keyword() + " ";
+    }
+
+    private String renderTypeParameters(List<TypeParameterModel> typeParameters) {
+        if (typeParameters.isEmpty()) {
+            return "";
+        }
+        return typeParameters.stream().map(TypeParameterModel::declaration).reduce((left, right) -> left + ", " + right)
+            .map(rendered -> "<" + rendered + ">")
+            .orElse("");
+    }
+
+    private String renderParameters(List<ParameterModel> parameters) {
+        return parameters.stream()
+            .map(parameter -> {
+                StringBuilder rendered = new StringBuilder();
+                parameter.annotations().forEach(annotation -> rendered.append(annotation.renderedSource()).append(" "));
+                String parameterType = parameter.varArgs() && parameter.type().endsWith("[]")
+                    ? parameter.type().substring(0, parameter.type().length() - 2) + "..."
+                    : parameter.type();
+                rendered.append(parameterType).append(' ').append(parameter.name());
+                return rendered.toString();
+            })
+            .reduce((left, right) -> left + ", " + right)
+            .map(rendered -> "(" + rendered + ")")
+            .orElse("()");
+    }
+
+    private String renderThrows(List<String> thrownTypes) {
+        if (thrownTypes.isEmpty()) {
+            return "";
+        }
+        return thrownTypes.stream().reduce((left, right) -> left + ", " + right)
+            .map(rendered -> " throws " + rendered)
+            .orElse("");
     }
 
     private final class JavacTypeContextResolver implements TypeContextResolver {
@@ -832,7 +1045,8 @@ public final class AimpProcessor extends AbstractProcessor {
                 fulfilledTypes.add(new com.aimp.model.ReferencedTypeModel(
                     sourceAvailableType.qualifiedName(),
                     sourceAvailableType.sourceSnippet(),
-                    roundNumber
+                    roundNumber,
+                    sourceAvailableType.fingerprintHash()
                 ));
             }
 
@@ -856,7 +1070,17 @@ public final class AimpProcessor extends AbstractProcessor {
                 return null;
             }
 
-            SourceAvailableType resolved = new SourceAvailableType(typeElement, qualifiedName, sourceSnippet);
+            String fingerprintSource = extractFingerprintSource(typeElement);
+            if (fingerprintSource.isBlank()) {
+                fingerprintSource = sourceSnippet;
+            }
+
+            SourceAvailableType resolved = new SourceAvailableType(
+                typeElement,
+                qualifiedName,
+                sourceSnippet,
+                SourceFingerprinting.sha256(fingerprintSource)
+            );
             cache.put(qualifiedName, resolved);
             return resolved;
         }
@@ -917,7 +1141,14 @@ public final class AimpProcessor extends AbstractProcessor {
         }
     }
 
-    private record SourceAvailableType(TypeElement typeElement, String qualifiedName, String sourceSnippet) {
+    private record StoredDependencyValidation(boolean valid, String reason) {
+    }
+
+    private static String shortHash(String hash) {
+        return hash.length() <= 12 ? hash : hash.substring(0, 12);
+    }
+
+    private record SourceAvailableType(TypeElement typeElement, String qualifiedName, String sourceSnippet, String fingerprintHash) {
     }
 
     private void error(Element element, String message) {

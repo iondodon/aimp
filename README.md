@@ -11,10 +11,8 @@ Handwritten contract:
 ```java
 package com.example.payment;
 
-import com.aimp.annotations.AIContract;
 import com.aimp.annotations.AIImplemented;
 
-@AIContract(version = "1")
 public interface PaymentService {
     @AIImplemented("Charge a payment and return the result")
     PaymentResult charge(PaymentRequest request);

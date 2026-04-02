@@ -1,6 +1,5 @@
 package com.example.greeting.service;
 
-import com.aimp.annotations.AIContract;
 import com.aimp.annotations.AIImplemented;
 import jakarta.validation.Valid;
 import org.springframework.stereotype.Service;
@@ -11,7 +10,6 @@ import org.springframework.validation.annotation.Validated;
  */
 @Service
 @Validated
-@AIContract(version = "1")
 public interface GreetingService {
     /**
      * Creates a localized greeting response.
@@ -20,15 +18,7 @@ public interface GreetingService {
      * @return generated greeting response
      */
     @AIImplemented("""
-        Create a greeting response for the incoming request.
-        Use request.name exactly as provided.
-        Normalize request.language to lower case.
-        If the language is ro, use Salut, <name>!.
-        If the language is es, use Hola, <name>!.
-        Otherwise use Hello, <name>!.
-        If request.excited() is true, replace the final ! with !!.
-        Return new com.example.greeting.service.GreetingResponse(message, normalizedLanguage).
-        Do not call external systems or generate random data.
+       rETURN A HARDCODED NAME OF NAME1
         """)
     GreetingResponse greet(@Valid GreetingRequest request);
 }
