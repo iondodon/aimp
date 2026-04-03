@@ -2,6 +2,7 @@ package com.example.greeting.service;
 
 import com.aimp.annotations.AIImplemented;
 import jakarta.validation.Valid;
+import java.util.Locale;
 import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
 
@@ -11,17 +12,58 @@ import org.springframework.validation.annotation.Validated;
 @AIImplemented
 @Service
 @Validated
-public interface GreetingService {
+public abstract class GreetingService {
+    /**
+     * Creates the greeting service contract.
+     */
+    protected GreetingService() {
+    }
+
+    /**
+     * Normalizes the requested language and falls back to English when the
+     * caller does not provide a supported value.
+     *
+     * @param requestedLanguage caller language preference
+     * @return normalized language code
+     */
+    protected String normalizeLanguage(String requestedLanguage) {
+        if (requestedLanguage == null || requestedLanguage.isBlank()) {
+            return "en";
+        }
+
+        String normalized = requestedLanguage.toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "ro", "es" -> normalized;
+            default -> "en";
+        };
+    }
+
+    /**
+     * Returns a default signature label for the chosen language.
+     *
+     * @param language normalized language code
+     * @return localized team signature
+     */
+    protected String defaultSignature(String language) {
+        return switch (language) {
+            case "ro" -> "Echipa de suport";
+            case "es" -> "Equipo de soporte";
+            default -> "Support Team";
+        };
+    }
+
     /**
      * Creates a localized greeting response.
-     * Supports at least {@code en}, {@code ro}, and {@code es}.
-     * Uses {@code request.name()} exactly as provided.
-     * Produces a response message like {@code Hello, Ion!}, {@code Salut, Ion!},
-     * or {@code Hola, Ion!} and appends an extra {@code !} when
-     * {@code request.excited()} is true.
+     * Welcome greetings should feel warm, birthday greetings should feel
+     * celebratory, and farewell greetings should feel polite and clear.
+     * Formal greetings should sound more professional than friendly ones.
+     * VIP callers should be acknowledged as valued guests.
+     * When a sign-off is requested, use the provided sender name when present;
+     * otherwise use the default team signature for the chosen language.
+     * Unsupported languages should fall back to English.
      *
      * @param request greeting request payload
      * @return generated greeting response
      */
-    GreetingResponse greet(@Valid GreetingRequest request);
+    public abstract GreetingResponse greet(@Valid GreetingRequest request);
 }

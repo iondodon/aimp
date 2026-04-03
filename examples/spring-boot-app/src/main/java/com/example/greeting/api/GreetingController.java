@@ -36,6 +36,9 @@ public abstract class GreetingController {
      * to {@link #greetingService} and returning its result.
      * The generated override should preserve the Spring MVC and validation
      * annotations required for request handling.
+     * The endpoint should support the richer greeting workflow defined by the
+     * service contract, including occasion, tone, VIP wording, and optional
+     * signature handling.
      *
      * @param request greeting request payload
      * @return resolved greeting response
